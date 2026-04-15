@@ -61,4 +61,29 @@ describe("tool()", () => {
     })
     expect(t.dangerous).toBe(true)
   })
+
+  it("parameters 不应包含 $schema 字段（LLM API 兼容性）", () => {
+    const t = tool({
+      name: "test",
+      description: "test",
+      parameters: z.object({ value: z.string() }),
+      execute: async () => "ok",
+    })
+    expect((t.parameters as any)["$schema"]).toBeUndefined()
+  })
+
+  it("parameters 应正确区分必填和可选属性", () => {
+    const t = tool({
+      name: "test",
+      description: "test",
+      parameters: z.object({
+        required_field: z.string(),
+        optional_field: z.string().optional(),
+      }),
+      execute: async () => "ok",
+    })
+    const params = t.parameters as any
+    expect(params.required).toContain("required_field")
+    expect(params.required ?? []).not.toContain("optional_field")
+  })
 })

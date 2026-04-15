@@ -8,7 +8,7 @@ export interface Tool<TArgs = Record<string, unknown>> {
   execute(args: TArgs): Promise<string>
 }
 
-export function tool<TSchema extends z.ZodObject<any>>(config: {
+export function tool<TSchema extends z.ZodObject<z.ZodRawShape>>(config: {
   name: string
   description: string
   parameters: TSchema
@@ -18,7 +18,7 @@ export function tool<TSchema extends z.ZodObject<any>>(config: {
   return {
     name: config.name,
     description: config.description,
-    parameters: toJSONSchema(config.parameters) as Record<string, unknown>,
+    parameters: toJSONSchema(config.parameters, { target: "openapi-3.0" }) as Record<string, unknown>,
     dangerous: config.dangerous ?? false,
     execute: config.execute,
   }
