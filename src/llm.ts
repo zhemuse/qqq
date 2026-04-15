@@ -45,12 +45,14 @@ export interface LLMConfig {
   baseURL?: string
 }
 
-// 工厂函数：根据 baseURL 决定用哪个客户端
+// 工厂函数：统一走 OpenAI 兼容路径
+// Anthropic 兼容端点：https://api.anthropic.com/v1
+// DeepSeek：https://api.deepseek.com
+// Ollama：http://localhost:11434/v1
 export async function createLLMClient(config: LLMConfig): Promise<LLMClient> {
-  if (config.baseURL) {
-    const { OpenAIClient } = await import("./llm/openai")
-    return new OpenAIClient(config)
-  }
-  const { AnthropicClient } = await import("./llm/anthropic")
-  return new AnthropicClient(config)
+  const { OpenAIClient } = await import("./llm/openai")
+  return new OpenAIClient({
+    ...config,
+    baseURL: config.baseURL ?? "https://api.anthropic.com/v1",
+  })
 }
