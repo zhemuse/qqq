@@ -1,5 +1,5 @@
 import { describe, it, expect, mock } from "bun:test"
-import { LLMClient } from "../src/llm"
+import { OpenAIClient } from "../src/llm/openai"
 import type { Message } from "../src/llm"
 
 const mockCreate = mock(async () => ({
@@ -23,9 +23,9 @@ mock.module("openai", () => ({
 
 const config = { model: "gpt-4o", apiKey: "test", baseURL: "https://api.openai.com/v1" }
 
-describe("LLMClient", () => {
+describe("OpenAIClient", () => {
   it("应返回文字内容", async () => {
-    const client = new LLMClient(config)
+    const client = new OpenAIClient(config)
     const result = await client.chat([{ role: "user", content: "hi" }], [])
     expect(result.content).toBe("done")
     expect(result.tool_calls).toBeUndefined()
@@ -53,7 +53,7 @@ describe("LLMClient", () => {
       ],
     }))
 
-    const client = new LLMClient(config)
+    const client = new OpenAIClient(config)
     const result = await client.chat([{ role: "user", content: "read a file" }], [])
 
     expect(result.tool_calls).toHaveLength(1)

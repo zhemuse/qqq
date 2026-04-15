@@ -1,5 +1,5 @@
-import { LLMClient } from "./llm"
-import type { Message, ToolCall, ToolResultMessage } from "./llm"
+import { createLLMClient } from "./llm"
+import type { LLMClient, Message, ToolCall, ToolResultMessage } from "./llm"
 import type { Tool } from "./tool"
 import { confirm } from "./confirm"
 
@@ -31,7 +31,7 @@ export class Agent {
   }
 
   async run(userMessage: string): Promise<string> {
-    const llm = this.options._llmClient ?? this.createLLM()
+    const llm = this.options._llmClient ?? (await this.createLLM())
     const confirmFn = this.options._confirm ?? confirm
     const tools = this.options.tools ?? []
     const maxSteps = this.options.maxSteps ?? 20
@@ -74,8 +74,8 @@ export class Agent {
     throw new Error(`Exceeded maxSteps (${maxSteps})`)
   }
 
-  private createLLM(): LLMClient {
-    return new LLMClient({
+  private async createLLM(): Promise<LLMClient> {
+    return createLLMClient({
       model: this.options.model ?? "claude-sonnet-4-6",
       apiKey: this.options.apiKey ?? process.env.ANTHROPIC_API_KEY ?? "",
       baseURL: this.options.baseURL,
