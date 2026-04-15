@@ -59,8 +59,8 @@ describe("OpenAIClient", () => {
     expect(result.tool_calls).toHaveLength(1)
     expect(result.tool_calls![0]).toEqual({
       id: "call_1",
-      name: "readFile",
-      args: { path: "src/index.ts" },
+      type: "function",
+      function: { name: "readFile", arguments: JSON.stringify({ path: "src/index.ts" }) },
     })
   })
 })

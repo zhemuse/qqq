@@ -1,11 +1,10 @@
-import { describe, it, expect, mock } from "bun:test"
+import { describe, it, expect } from "bun:test"
 import { Agent } from "../src/agent"
 import { tool } from "../src/tool"
 import { z } from "zod"
-import type { LLMClient, LLMResponse, Message } from "../src/llm"
+import type { ILLMClient, LLMResponse, Message } from "../src/llm"
 
-// Mock LLM：直接返回文字答案，不调用工具
-function makeMockLLM(responses: LLMResponse[]): LLMClient {
+function makeMockLLM(responses: LLMResponse[]): ILLMClient {
   let i = 0
   return {
     async chat(_messages: Message[], _tools: unknown[], _systemPrompt?: string): Promise<LLMResponse> {
@@ -13,6 +12,12 @@ function makeMockLLM(responses: LLMResponse[]): LLMClient {
     },
   }
 }
+
+const toolCall = (id: string, name: string, args: Record<string, unknown>) => ({
+  id,
+  type: "function" as const,
+  function: { name, arguments: JSON.stringify(args) },
+})
 
 describe("Agent", () => {
   it("run() 应返回 LLM 的文字回答", async () => {
@@ -39,7 +44,7 @@ describe("Agent", () => {
     const agent = new Agent({
       tools: [greet],
       _llmClient: makeMockLLM([
-        { content: "", tool_calls: [{ id: "c1", name: "greet", args: { name: "World" } }] },
+        { content: "", tool_calls: [toolCall("c1", "greet", { name: "World" })] },
         { content: "Done!" },
       ]),
     })
@@ -61,7 +66,7 @@ describe("Agent", () => {
       tools: [loopTool],
       maxSteps: 2,
       _llmClient: makeMockLLM(
-        Array(10).fill({ content: "", tool_calls: [{ id: "c1", name: "loop", args: {} }] })
+        Array(10).fill({ content: "", tool_calls: [toolCall("c1", "loop", {})] })
       ),
     })
 
@@ -80,9 +85,9 @@ describe("Agent", () => {
     const agent = new Agent({
       tools: [dangerTool],
       _llmClient: makeMockLLM([
-        { content: "", tool_calls: [{ id: "c1", name: "danger", args: {} }] },
+        { content: "", tool_calls: [toolCall("c1", "danger", {})] },
       ]),
-      _confirm: async () => false,  // 模拟用户拒绝
+      _confirm: async () => false,
     })
 
     await expect(agent.run("do danger")).rejects.toThrow("PermissionDenied")

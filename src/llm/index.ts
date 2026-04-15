@@ -1,7 +1,7 @@
-export type { Message, TextMessage, ToolCall, AssistantToolCallMessage, ToolResultMessage, LLMResponse, LLMConfig, ILLMClient } from "./types"
+export type { Message, TextMessage, ToolCall, AssistantToolCallMessage, ToolResultMessage, LLMResponse, LLMConfig, ILLMClient } from "./interface"
 export { OpenAIClient } from "./openai"
 
-import type { LLMConfig, ILLMClient } from "./types"
+import type { LLMConfig, ILLMClient } from "./interface"
 
 export async function createLLMClient(config: LLMConfig): Promise<ILLMClient> {
   const { OpenAIClient } = await import("./openai")

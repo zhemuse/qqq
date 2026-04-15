@@ -1,5 +1,5 @@
 import { createLLMClient } from "./llm"
-import type { ILLMClient, Message, ToolCall, ToolResultMessage } from "./llm"
+import type { ILLMClient, Message } from "./llm"
 import type { Tool } from "./tool"
 import { confirm } from "./confirm"
 
@@ -18,7 +18,6 @@ export interface AgentOptions {
   messages?: Message[]
   tools?: Tool[]
   maxSteps?: number
-  // 测试用注入点（下划线前缀表示内部/测试用途）
   _llmClient?: ILLMClient
   _confirm?: (prompt: string) => Promise<boolean>
 }
@@ -44,29 +43,26 @@ export class Agent {
     for (let step = 0; step < maxSteps; step++) {
       const response = await llm.chat(messages, tools, this.options.prompt)
 
-      if (!response.tool_calls || response.tool_calls.length === 0) {
+      if (!response.tool_calls?.length) {
         return response.content
       }
 
-      messages.push({ role: "assistant", content: response.tool_calls })
+      messages.push({ role: "assistant", content: null, tool_calls: response.tool_calls })
 
       for (const toolCall of response.tool_calls) {
-        const tool = tools.find((t) => t.name === toolCall.name)
-        if (!tool) throw new Error(`Unknown tool: ${toolCall.name}`)
+        const toolName = toolCall.function.name
+        const toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
+        const tool = tools.find((t) => t.name === toolName)
+        if (!tool) throw new Error(`Unknown tool: ${toolName}`)
 
         if (tool.dangerous) {
-          const ok = await confirmFn(`执行 [${tool.name}]？`)
-          if (!ok) throw new PermissionDeniedError(tool.name)
+          const ok = await confirmFn(`执行 [${toolName}]？`)
+          if (!ok) throw new PermissionDeniedError(toolName)
         }
 
-        const result = await tool.execute(toolCall.args)
+        const result = await tool.execute(toolArgs)
 
-        const toolResult: ToolResultMessage = {
-          role: "tool_result",
-          tool_use_id: toolCall.id,
-          content: result,
-        }
-        messages.push(toolResult)
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: result })
       }
     }
 
