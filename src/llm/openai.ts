@@ -1,8 +1,8 @@
 import OpenAI from "openai"
-import type { LLMClient, LLMConfig, LLMResponse, Message, ToolCall, ToolResultMessage } from "../llm"
+import type { ILLMClient, LLMConfig, LLMResponse, Message, ToolCall, ToolResultMessage } from "./types"
 import type { Tool } from "../tool"
 
-export class OpenAIClient implements LLMClient {
+export class OpenAIClient implements ILLMClient {
   private client: OpenAI
   private model: string
 

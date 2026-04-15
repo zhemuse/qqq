@@ -1,5 +1,5 @@
 import { createLLMClient } from "./llm"
-import type { LLMClient, Message, ToolCall, ToolResultMessage } from "./llm"
+import type { ILLMClient, Message, ToolCall, ToolResultMessage } from "./llm"
 import type { Tool } from "./tool"
 import { confirm } from "./confirm"
 
@@ -19,7 +19,7 @@ export interface AgentOptions {
   tools?: Tool[]
   maxSteps?: number
   // 测试用注入点（下划线前缀表示内部/测试用途）
-  _llmClient?: LLMClient
+  _llmClient?: ILLMClient
   _confirm?: (prompt: string) => Promise<boolean>
 }
 
@@ -48,7 +48,6 @@ export class Agent {
         return response.content
       }
 
-      // 助手调用工具的消息
       messages.push({ role: "assistant", content: response.tool_calls })
 
       for (const toolCall of response.tool_calls) {
@@ -74,7 +73,7 @@ export class Agent {
     throw new Error(`Exceeded maxSteps (${maxSteps})`)
   }
 
-  private async createLLM(): Promise<LLMClient> {
+  private async createLLM(): Promise<ILLMClient> {
     return createLLMClient({
       model: this.options.model ?? "claude-sonnet-4-6",
       apiKey: this.options.apiKey ?? process.env.ANTHROPIC_API_KEY ?? "",
