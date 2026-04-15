@@ -14,11 +14,14 @@ export class AnthropicClient implements LLMClient {
   async chat(messages: Message[], tools: Tool[], systemPrompt?: string): Promise<LLMResponse> {
     const anthropicMessages = this.toAnthropicMessages(messages)
 
-    const toolDefs = tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.parameters as Anthropic.Messages.Tool["input_schema"],
-    }))
+    const toolDefs = tools.map((t) => {
+      const { additionalProperties: _, ...schema } = t.parameters as Record<string, unknown>
+      return {
+        name: t.name,
+        description: t.description,
+        input_schema: schema as Anthropic.Messages.Tool["input_schema"],
+      }
+    })
 
     const response = await this.client.messages.create({
       model: this.model,

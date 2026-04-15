@@ -10,17 +10,20 @@ export const search = tool({
   }),
   execute: async ({ pattern, path }) => {
     try {
-      const proc = Bun.spawn(["grep", "-rn", "--include=*", pattern, path], {
+      const proc = Bun.spawn(["grep", "-rn", pattern, path], {
         stdout: "pipe",
         stderr: "pipe",
       })
-      const stdout = await new Response(proc.stdout).text()
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
       const exitCode = await proc.exited
 
-      if (exitCode === 1 || stdout.trim() === "") {
-        return `No matches found for "${pattern}" in ${path}`
-      }
-      return stdout.trim()
+      if (exitCode === 0) return stdout.trim()
+      if (exitCode === 1) return `No matches found for "${pattern}" in ${path}`
+      // exitCode >= 2: grep error (bad path, permission denied, etc.)
+      return `Search error: ${stderr.trim() || stdout.trim()}`
     } catch (err) {
       return `Error searching: ${(err as Error).message}`
     }

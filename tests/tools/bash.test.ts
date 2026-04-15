@@ -15,4 +15,9 @@ describe("bash tool", () => {
   it("dangerous 应为 true", () => {
     expect(bash.dangerous).toBe(true)
   })
+
+  it("命令失败时应在输出中包含退出码", async () => {
+    const result = await bash.execute({ command: "exit 1" })
+    expect(result).toContain("exit code: 1")
+  })
 })

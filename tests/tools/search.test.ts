@@ -25,4 +25,9 @@ describe("search tool", () => {
     const result = await search.execute({ pattern: "zzznomatch", path: TEST_DIR })
     expect(result).toContain("No matches")
   })
+
+  it("路径不存在时应返回错误信息（而非 No matches）", async () => {
+    const result = await search.execute({ pattern: "hello", path: "/tmp/definitely-nonexistent-xyz123" })
+    expect(result.toLowerCase()).toContain("error")
+  })
 })

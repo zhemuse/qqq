@@ -18,9 +18,12 @@ export const bash = tool({
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
       ])
-      await proc.exited
+      const exitCode = await proc.exited
 
       const output = [stdout, stderr].filter(Boolean).join("\n").trim()
+      if (exitCode !== 0) {
+        return `${output || "(no output)"}\n[exit code: ${exitCode}]`
+      }
       return output || "(no output)"
     } catch (err) {
       return `Error executing command: ${(err as Error).message}`
