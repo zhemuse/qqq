@@ -1,6 +1,7 @@
 import OpenAI from "openai"
+import { toJSONSchema } from "zod"
 import type { ILLMClient, LLMConfig, LLMResponse, Message } from "./interface"
-import type { Tool } from "../tool"
+import type { FunctionTool } from "../tool"
 
 export class OpenAIClient implements ILLMClient {
   private client: OpenAI
@@ -11,19 +12,18 @@ export class OpenAIClient implements ILLMClient {
     this.model = config.model
   }
 
-  async chat(messages: Message[], tools: Tool[], systemPrompt?: string): Promise<LLMResponse> {
+  async chat(messages: Message[], tools: FunctionTool[], systemPrompt?: string): Promise<LLMResponse> {
     const allMessages: Message[] = systemPrompt
       ? [{ role: "system", content: systemPrompt }, ...messages]
       : messages
 
-    const toolDefs: OpenAI.ChatCompletionTool[] = tools.map((t) => ({
-      type: "function",
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters as Record<string, unknown>,
-      },
-    }))
+    const toolDefs: OpenAI.ChatCompletionTool[] = tools.map((t) => {
+      const { additionalProperties: _, ...schema } = toJSONSchema(t.parameters, { target: "openapi-3.0" }) as Record<string, unknown>
+      return {
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: schema as Record<string, unknown> },
+      }
+    })
 
     const response = await this.client.chat.completions.create({
       model: this.model,

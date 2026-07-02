@@ -1,7 +1,7 @@
-import { tool } from "../tool"
+import { defineTool } from "../tool"
 import { z } from "zod"
 
-export const search = tool({
+export const search = defineTool({
   name: "search",
   description: "在指定目录下递归搜索包含 pattern 的文件行（类似 grep -r）",
   parameters: z.object({
@@ -22,7 +22,6 @@ export const search = tool({
 
       if (exitCode === 0) return stdout.trim()
       if (exitCode === 1) return `No matches found for "${pattern}" in ${path}`
-      // exitCode >= 2: grep error (bad path, permission denied, etc.)
       return `Search error: ${stderr.trim() || stdout.trim()}`
     } catch (err) {
       return `Error searching: ${(err as Error).message}`

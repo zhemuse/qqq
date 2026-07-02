@@ -1,7 +1,7 @@
-import { tool } from "../tool"
+import { defineTool } from "../tool"
 import { z } from "zod"
 
-export const readFile = tool({
+export const readFile = defineTool({
   name: "read_file",
   description: "读取文件内容并返回文本",
   parameters: z.object({

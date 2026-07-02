@@ -16,8 +16,4 @@ describe("writeFile tool", () => {
     const written = await fs.readFile(TEST_FILE, "utf-8")
     expect(written).toBe("test content")
   })
-
-  it("dangerous 应为 true", () => {
-    expect(writeFile.dangerous).toBe(true)
-  })
 })

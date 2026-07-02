@@ -1,10 +1,9 @@
-import { tool } from "../tool"
+import { defineTool } from "../tool"
 import { z } from "zod"
 
-export const bash = tool({
+export const bash = defineTool({
   name: "bash",
   description: "在 shell 中执行命令并返回输出（stdout + stderr）",
-  dangerous: true,
   parameters: z.object({
     command: z.string().describe("要执行的 shell 命令"),
   }),

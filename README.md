@@ -19,7 +19,7 @@ ANTHROPIC_API_KEY=sk-ant-xxx bun run cli
 # DeepSeek
 AGENT_BASE_URL=https://api.deepseek.com \
 ANTHROPIC_API_KEY=sk-deepseek-xxx \
-AGENT_MODEL=deepseek-chat \
+AGENT_MODEL=deepseek-reasoner \
 bun run cli
 ```
 

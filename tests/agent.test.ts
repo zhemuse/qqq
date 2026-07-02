@@ -1,13 +1,14 @@
 import { describe, it, expect } from "bun:test"
 import { Agent } from "../src/agent"
-import { tool } from "../src/tool"
+import { defineTool } from "../src/tool"
 import { z } from "zod"
 import type { ILLMClient, LLMResponse, Message } from "../src/llm"
+import type { FunctionTool } from "../src/tool"
 
 function makeMockLLM(responses: LLMResponse[]): ILLMClient {
   let i = 0
   return {
-    async chat(_messages: Message[], _tools: unknown[], _systemPrompt?: string): Promise<LLMResponse> {
+    async chat(_messages: Message[], _tools: FunctionTool[], _systemPrompt?: string): Promise<LLMResponse> {
       return responses[i++] ?? { content: "done" }
     },
   }
@@ -31,7 +32,7 @@ describe("Agent", () => {
   it("run() 应执行工具并将结果追加到 messages 再次调用 LLM", async () => {
     const executed: string[] = []
 
-    const greet = tool({
+    const greet = defineTool({
       name: "greet",
       description: "问好",
       parameters: z.object({ name: z.string() }),
@@ -55,7 +56,7 @@ describe("Agent", () => {
   })
 
   it("超过 maxSteps 应抛出错误", async () => {
-    const loopTool = tool({
+    const loopTool = defineTool({
       name: "loop",
       description: "always calls itself",
       parameters: z.object({}),
@@ -71,25 +72,5 @@ describe("Agent", () => {
     })
 
     await expect(agent.run("loop")).rejects.toThrow("maxSteps")
-  })
-
-  it("dangerous 工具被拒绝时应抛出 PermissionDeniedError", async () => {
-    const dangerTool = tool({
-      name: "danger",
-      description: "危险",
-      parameters: z.object({}),
-      dangerous: true,
-      execute: async () => "done",
-    })
-
-    const agent = new Agent({
-      tools: [dangerTool],
-      _llmClient: makeMockLLM([
-        { content: "", tool_calls: [toolCall("c1", "danger", {})] },
-      ]),
-      _confirm: async () => false,
-    })
-
-    await expect(agent.run("do danger")).rejects.toThrow("PermissionDenied")
   })
 })

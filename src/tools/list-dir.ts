@@ -1,8 +1,8 @@
-import { tool } from "../tool"
+import { defineTool } from "../tool"
 import { z } from "zod"
 import * as fs from "fs/promises"
 
-export const listDir = tool({
+export const listDir = defineTool({
   name: "list_dir",
   description: "列出目录下的文件和子目录",
   parameters: z.object({

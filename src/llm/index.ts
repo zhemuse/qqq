@@ -1,4 +1,4 @@
-export type { Message, TextMessage, ToolCall, AssistantToolCallMessage, ToolResultMessage, LLMResponse, LLMConfig, ILLMClient } from "./interface"
+export type { Message, ToolCall, LLMResponse, LLMConfig, ILLMClient } from "./interface"
 export { OpenAIClient } from "./openai"
 
 import type { LLMConfig, ILLMClient } from "./interface"

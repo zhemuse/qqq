@@ -1,5 +1,5 @@
 import type OpenAI from "openai"
-import type { Tool } from "../tool"
+import type { FunctionTool } from "../tool"
 
 // 直接用 OpenAI 标准类型
 export type Message = OpenAI.ChatCompletionMessageParam
@@ -20,5 +20,5 @@ export interface LLMConfig {
 }
 
 export interface ILLMClient {
-  chat(messages: Message[], tools: Tool[], systemPrompt?: string): Promise<LLMResponse>
+  chat(messages: Message[], tools: FunctionTool[], systemPrompt?: string): Promise<LLMResponse>
 }

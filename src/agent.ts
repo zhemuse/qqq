@@ -1,7 +1,6 @@
 import { createLLMClient } from "./llm"
 import type { ILLMClient, Message } from "./llm"
-import type { Tool } from "./tool"
-import { confirm } from "./confirm"
+import type { FunctionTool } from "./tool"
 
 export class PermissionDeniedError extends Error {
   constructor(toolName: string) {
@@ -16,10 +15,9 @@ export interface AgentOptions {
   baseURL?: string
   prompt?: string
   messages?: Message[]
-  tools?: Tool[]
+  tools?: FunctionTool[]
   maxSteps?: number
   _llmClient?: ILLMClient
-  _confirm?: (prompt: string) => Promise<boolean>
 }
 
 export class Agent {
@@ -29,9 +27,8 @@ export class Agent {
     this.options = options
   }
 
-  async run(userMessage: string): Promise<string> {
+  async run(userMessage: string, signal?: AbortSignal): Promise<string> {
     const llm = this.options._llmClient ?? (await this.createLLM())
-    const confirmFn = this.options._confirm ?? confirm
     const tools = this.options.tools ?? []
     const maxSteps = this.options.maxSteps ?? 20
 
@@ -49,20 +46,16 @@ export class Agent {
 
       messages.push({ role: "assistant", content: null, tool_calls: response.tool_calls })
 
-      for (const toolCall of response.tool_calls) {
+      for (const toolCall of response.tool_calls.filter((tc) => tc.type === "function")) {
         const toolName = toolCall.function.name
         const toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
         const tool = tools.find((t) => t.name === toolName)
         if (!tool) throw new Error(`Unknown tool: ${toolName}`)
 
-        if (tool.dangerous) {
-          const ok = await confirmFn(`执行 [${toolName}]？`)
-          if (!ok) throw new PermissionDeniedError(toolName)
-        }
+        const result = await tool.execute(toolArgs, signal)
+        const content = typeof result === "string" ? result : JSON.stringify(result)
 
-        const result = await tool.execute(toolArgs)
-
-        messages.push({ role: "tool", tool_call_id: toolCall.id, content: result })
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content })
       }
     }
 
