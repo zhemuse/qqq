@@ -1,0 +1,10 @@
+{
+  "name": "qqq-agent-v1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun agent.ts",
+    "test": "bun test",
+    "check": "bun test && bun build agent.ts --target bun --outfile /tmp/qqq-agent-v1-check.js"
+  }
+}
