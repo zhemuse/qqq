@@ -11,7 +11,10 @@ test("feeds a bash result back to the model before returning the final answer", 
   process.env.ANTHROPIC_API_KEY = "test-key"
   process.env.ANTHROPIC_MODEL = "test-model"
 
-  globalThis.fetch = async (_input, init) => {
+  const stubFetch = async (
+    _input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
     requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
     callCount += 1
 
@@ -36,6 +39,10 @@ test("feeds a bash result back to the model before returning the final answer", 
       stop_reason: "end_turn",
     })
   }
+
+  globalThis.fetch = Object.assign(stubFetch, {
+    preconnect: originalFetch.preconnect,
+  })
 
   try {
     const answer = await runAgent("Who are you?")
