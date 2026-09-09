@@ -17,6 +17,20 @@ ANTHROPIC_API_KEY=your-api-key
 ANTHROPIC_MODEL=your-model
 ```
 
+### 使用 DeepSeek
+
+DeepSeek 提供了兼容 Anthropic Messages 的 API，因此不需要改写消息格式、工具定义或 Agent Loop，只需要更换模型地址、API Key 和模型名称：
+
+```text
+ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+ANTHROPIC_API_KEY=your-deepseek-api-key
+ANTHROPIC_MODEL=deepseek-v4-flash
+```
+
+此时程序仍然请求 `/v1/messages`，继续使用 `tool_use` 和 `tool_result` 完成工具调用。需要更强模型能力时，可以把模型改为 `deepseek-v4-pro`。
+
+接口兼容范围及最新模型信息以 [DeepSeek Anthropic API 官方文档](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api/) 为准。
+
 然后运行：
 
 ```bash
