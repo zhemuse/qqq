@@ -2,7 +2,7 @@
 
 Hello, boys and girls.
 
-相信大家或多或少都接触过大模型。不管是 ChatGPT、Claude 这样的聊天产品，还是能够读取文件、执行命令、修改代码的 Agent，我们已经越来越习惯直接向模型描述目标，然后等待它给出结果。
+相信大家或多或少都接触过大模型。不管是 ChatGPT、Claude 这样的聊天产品，还是能够读取文件、执行命令、修改代码的 Agent 如Codex、Claude Cowork，我们已经越来越习惯直接向模型描述目标，然后等待它给出结果。
 
 但如果把产品界面、插件系统和各种框架全部拿掉，一个 Agent 到底还剩下什么？模型为什么能记住前面的对话？它又为什么能从“只会说话”变成“可以做事”？
 
@@ -46,7 +46,7 @@ $ cat agent.ts
 - 模型通过观察工具结果决定下一步；
 - 当模型认为信息足够时，它停止调用工具并给出最终回答。
 
-这已经是一个完整的 Agent 行为。它没有任务规划器、向量数据库或多 Agent 协作，只有消息、模型、工具和一个循环。
+这已经是一个完整的 Agent loop 行为。它没有其他，只有上下文消息、模型、工具和一个循环。
 
 接下来从最底层开始，把这段过程拆开。
 
@@ -127,7 +127,7 @@ response = model(messages, tools, options)
 
 ## Anthropic Messages 格式
 
-不同模型厂商使用的 API 格式不完全相同。这一讲选择 Anthropic Messages 格式，因为它把文本、工具调用和工具结果统一表示为 Content Block，后面的 Agent Loop 会非常直观。
+不同模型厂商使用的 API 格式不完全相同。这一讲选择 Anthropic Messages 格式，因为它把文本、工具调用和工具结果统一表示为 [Content Block](https://platform.claude.com/docs/zh-CN/api/cli/messages#content_block)，后面的 Agent Loop 会非常直观。
 
 ### System Prompt
 
@@ -166,7 +166,7 @@ response = model(messages, tools, options)
 }
 ```
 
-Content Block 的优势是同一条消息可以容纳文本、图片、工具调用或工具结果等不同内容。
+Content Block 的优势是同一条消息可以容纳文本、图片、工具调用或工具结果等不同内容。具体可以查看 https://platform.claude.com/docs/zh-CN/api/cli/messages#content_block
 
 ### Assistant Text Message
 
@@ -264,6 +264,10 @@ Function Calling、Tool Calling 和 `tool_use` 经常被当成不同概念。它
 | 关联字段 | `tool_call_id` | `tool_use_id` |
 
 因此，Function Calling 并不是模型获得了一个可以直接调用的 JavaScript 函数。模型只获得了工具的名字、描述和参数 Schema，然后生成符合协议的结构化数据。
+
+补充说明
+https://developers.openai.com/api/docs/guides/function-calling
+https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
 
 真正的调用始终发生在宿主程序中。
 
