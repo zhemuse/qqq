@@ -1,738 +1,782 @@
-# 第一次分享：从 LLM API 到可持续对话
+# 第一讲：120 行写出一个最小 ReAct Agent
 
-> 核心问题：一个无状态的模型调用，为什么能够表现得像一段连续对话？
+Hello, boys and girls.
 
-## 1. 这次分享要得到什么
+相信大家或多或少都接触过大模型。不管是 ChatGPT、Claude 这样的聊天产品，还是能够读取文件、执行命令、修改代码的 Agent，我们已经越来越习惯直接向模型描述目标，然后等待它给出结果。
 
-这次分享从最普通的一次 HTTP 请求开始，最终得到一个可以连续对话的命令行程序。
+但如果把产品界面、插件系统和各种框架全部拿掉，一个 Agent 到底还剩下什么？模型为什么能记住前面的对话？它又为什么能从“只会说话”变成“可以做事”？
 
-它还不是 Agent。
+这一讲，我们不使用任何 Agent 框架，也不安装模型 SDK。只用 Bun、TypeScript、一次裸 `fetch` 和一个 `bash` 工具，在单文件中写出一个最小 ReAct Agent。
 
-它没有工具，不会访问文件，不会执行命令，也不会自行决定下一步。它只做一件事：保存已经发生的对话，并在下一次调用模型时把这些信息重新提交。
+我们主要回答五个问题：
 
-这一版刻意保持简单，因为后面所有 Agent 能力都依赖同一个基础：**一份顺序正确、内容完整、可以持续追加的消息记录。**
+1. 为什么 LLM API 本身没有会话状态？
+2. Anthropic Messages API 如何表示一段对话？
+3. 模型如何通过 Function Calling 或 `tool_use` 请求调用工具？
+4. Reason、Act、Observe 如何组成一个最小 Agent Loop？
+5. Agent 和普通 Chat 程序的本质区别是什么？
 
-完成这次分享后，参与者应该能够解释：
+## 从一个场景开始
 
-- 为什么 LLM API 本身没有会话状态；
-- System、User、Assistant 三种消息分别表达什么；
-- Prompt、Message、Transcript 有什么区别；
-- 多轮对话为什么必须重新提交历史消息；
-- Context Window 如何限制“记忆”；
-- 为什么 Message 是 Agent 框架最先需要稳定下来的契约；
-- 为什么 V1 是对话程序，而不是 Agent。
+先看最终效果。我们希望在终端中执行：
 
-## 2. 两小时安排
-
-| 时间 | 内容 |
-|---:|---|
-| 0–15 分钟 | 从一次模型调用开始：输入、输出和无状态性 |
-| 15–35 分钟 | Message、Role、Prompt 与 Transcript |
-| 35–55 分钟 | V0：只能回答一次的模型客户端 |
-| 55–80 分钟 | 从 V0 演进到 V1：保存并重放消息历史 |
-| 80–100 分钟 | 查看请求数据、修改 System Message、对照最终架构 |
-| 100–112 分钟 | 四个失败实验 |
-| 112–120 分钟 | 常见误解、总结和 V2 预告 |
-
-这是一场技术分享，不要求参与者现场从零完成代码。讲者应提前准备可运行版本，通过关键片段、请求日志和失败实验解释设计。
-
-## 3. 开场：模型真的“记得”你吗
-
-先展示一段普通对话：
-
-```text
-你：我叫 Lin，正在做一个叫 qqq 的 TypeScript 项目。
-模型：你好 Lin，我了解了。
-
-你：我叫什么？项目叫什么？
-模型：你叫 Lin，项目叫 qqq。
+```bash
+bun agent.ts "你是谁？"
 ```
 
-从用户视角看，模型似乎记住了第一句话。
+程序并没有在 System Prompt 里写明自己的文件名，也没有提前准备固定答案。模型为了回答问题，可能会先观察当前目录，再读取源代码：
 
-但如果第二次只发送新的问题：
+```text
+$ ls
+agent.ts
+
+$ cat agent.ts
+...
+
+我是 agent.ts，一个运行在 Bun 上的最小 ReAct Agent。
+我把用户消息发给模型；如果模型请求执行命令，我就执行命令，
+再把结果交还给模型，直到模型不再请求工具为止。
+```
+
+这段过程里发生了几件值得注意的事：
+
+- 模型自己决定先执行 `ls`；
+- 第二条命令 `cat agent.ts` 来自第一条命令的结果；
+- 真正执行命令的是本地 TypeScript 程序，而不是模型；
+- 模型通过观察工具结果决定下一步；
+- 当模型认为信息足够时，它停止调用工具并给出最终回答。
+
+这已经是一个完整的 Agent 行为。它没有任务规划器、向量数据库或多 Agent 协作，只有消息、模型、工具和一个循环。
+
+接下来从最底层开始，把这段过程拆开。
+
+## 一次 LLM API 调用是什么
+
+先暂时忘掉 Agent，把模型调用看成一个普通函数：
+
+```text
+response = model(messages, tools, options)
+```
+
+它接收本次请求中的消息和工具定义，生成一条新的 Assistant Message。
+
+从应用程序的角度看，一次裸 API 调用是无状态的：
+
+```text
+第一次请求结束
+    ↓
+服务端返回结果
+    ↓
+第二次请求不会自动获得第一次请求的内容
+```
+
+假设第一次请求是：
 
 ```json
 {
   "messages": [
-    { "role": "user", "content": "我叫什么？项目叫什么？" }
+    {
+      "role": "user",
+      "content": "我正在开发一个叫 qqq 的项目。"
+    }
   ]
 }
 ```
 
-模型没有可靠依据回答。第一次 HTTP 请求已经结束，服务端不会因为调用方仍在同一个终端窗口中，就自动把上一轮内容补进这次请求。
-
-能够连续对话的真正原因，是应用在第二次请求中重新发送了历史：
+模型回答后，如果第二次只发送：
 
 ```json
 {
   "messages": [
-    { "role": "user", "content": "我叫 Lin，正在做一个叫 qqq 的 TypeScript 项目。" },
-    { "role": "assistant", "content": "你好 Lin，我了解了。" },
-    { "role": "user", "content": "我叫什么？项目叫什么？" }
+    {
+      "role": "user",
+      "content": "我的项目叫什么？"
+    }
   ]
 }
 ```
 
-因此，“模型记得”只是用户体验层面的说法。工程上更准确的表达是：
+它无法可靠知道答案。两个请求之间没有天然共享的程序状态。
 
-> 应用保存了 Transcript，并在后续调用中重放了仍然需要的上下文。
-
-## 4. 基础概念一：LLM API 是无状态函数
-
-先把模型调用简化为一个函数：
-
-```text
-nextMessage = model(messages, options)
-```
-
-输入包括消息、模型名和推理参数，输出是一条新的 Assistant Message。
-
-对于应用程序来说，这次调用具备三个重要特征：
-
-1. 模型只能依据当前请求中可见的信息生成结果；
-2. 调用完成后，应用必须自行保存需要延续的状态；
-3. 下一次调用是否与上一次有关，取决于应用传入了什么，而不是两个请求是否来自同一进程。
-
-真实的 Provider 可能提供服务端会话、缓存或 Responses 等更高层能力，但 Agent Runtime 不能把核心状态管理建立在某一家服务的隐式行为上。为了理解底层机制，V1 使用最朴素的请求模型：**每次显式传入完整的消息数组。**
-
-这带来一个非常重要的架构判断：
-
-```text
-模型负责生成下一条消息
-应用负责决定模型能看到哪些历史
-```
-
-模型并不拥有会话；应用拥有会话。
-
-## 5. 基础概念二：Message 与 Role
-
-V1 只需要三种角色。
-
-### 5.1 System Message
-
-System Message 描述本次交互的总体身份、目标和边界。
+要让模型表现出连续对话能力，应用必须保存历史，并在第二次请求中重新发送：
 
 ```json
 {
-  "role": "system",
-  "content": "你是一个简洁的 TypeScript 技术助手。"
+  "messages": [
+    {
+      "role": "user",
+      "content": "我正在开发一个叫 qqq 的项目。"
+    },
+    {
+      "role": "assistant",
+      "content": "了解，你正在开发 qqq。"
+    },
+    {
+      "role": "user",
+      "content": "我的项目叫什么？"
+    }
+  ]
 }
 ```
 
-它不是“更长的用户问题”，而是应用对本次模型行为的基础配置。V1 把它放在消息数组开头，每次调用都携带。
+所以，“模型记住了”是用户体验层面的描述。工程上更准确的说法是：
 
-### 5.2 User Message
+> 应用保存了消息历史，并把需要的历史重新放进模型的 Context Window。
 
-User Message 表示用户在当前时刻提出的信息或请求：
+模型负责生成下一条消息，应用负责维护当前对话状态。
+
+## Anthropic Messages 格式
+
+不同模型厂商使用的 API 格式不完全相同。这一讲选择 Anthropic Messages 格式，因为它把文本、工具调用和工具结果统一表示为 Content Block，后面的 Agent Loop 会非常直观。
+
+### System Prompt
+
+在 Anthropic Messages API 中，System Prompt 通常是请求体的顶层字段：
+
+```json
+{
+  "system": "你是一个终端 Agent。需要了解环境时使用 bash 工具。"
+}
+```
+
+它描述模型在当前应用中的身份和行为边界。
+
+### User Message
+
+用户消息可以使用字符串：
 
 ```json
 {
   "role": "user",
-  "content": "解释 TypeScript 中 unknown 和 any 的区别。"
+  "content": "列出当前目录中的 TypeScript 文件。"
 }
 ```
 
-用户的每次输入都会形成一条新消息，并追加到 Transcript 尾部。
+也可以使用 Content Block 数组：
 
-### 5.3 Assistant Message
+```json
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "列出当前目录中的 TypeScript 文件。"
+    }
+  ]
+}
+```
 
-Assistant Message 是模型返回的结果：
+Content Block 的优势是同一条消息可以容纳文本、图片、工具调用或工具结果等不同内容。
+
+### Assistant Text Message
+
+模型只需要回答文字时，返回内容通常类似：
 
 ```json
 {
   "role": "assistant",
-  "content": "unknown 要求使用前先缩小类型范围，而 any 会跳过类型检查。"
+  "content": [
+    {
+      "type": "text",
+      "text": "当前目录中有一个 agent.ts 文件。"
+    }
+  ],
+  "stop_reason": "end_turn"
 }
 ```
 
-这条结果不仅需要显示给用户，也必须被保存。否则下一轮只保留用户消息，模型就看不到自己上一轮说过什么。
+### Assistant Tool Use
 
-### 5.4 顺序本身就是信息
+当模型认为需要调用工具时，它不会真的执行函数，而是返回一个 `tool_use` Content Block：
 
-Transcript 不是按角色分类的对象，也不是三张独立列表，而是一条有时间顺序的记录：
-
-```text
-system → user → assistant → user → assistant → ...
+```json
+{
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01ABC",
+      "name": "bash",
+      "input": {
+        "command": "ls"
+      }
+    }
+  ],
+  "stop_reason": "tool_use"
+}
 ```
 
-以下两组消息包含相同句子，却表达不同语义：
+这段 JSON 的意思不是“模型执行了 `ls`”，而是：
 
-```text
-A: user「值是多少？」 → assistant「42」
-B: assistant「42」 → user「值是多少？」
+> 模型请求宿主程序调用名为 `bash` 的工具，输入参数是 `{ "command": "ls" }`。
+
+是否允许执行、怎样执行、执行多久、结果返回多少内容，全部由我们的代码决定。
+
+### Tool Result
+
+宿主程序执行工具后，需要把观察结果作为 `tool_result` 放回消息历史：
+
+```json
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "tool_result",
+      "tool_use_id": "toolu_01ABC",
+      "content": "agent.ts\nREADME.md\n"
+    }
+  ]
+}
 ```
 
-因此，消息数组必须采用只追加的时间线模型。任意排序、去重或分组都会改变模型所看到的对话。
+`tool_use_id` 必须与模型请求中的 `id` 对应。模型一轮可能请求多个工具，调用 ID 用来确定每个结果回答的是哪一次请求。
 
-## 6. 基础概念三：Prompt、Message 与 Transcript
-
-这三个词经常被混在一起。
-
-### Prompt
-
-Prompt 是交给模型的指令或上下文。它是语义概念，不一定对应一个字符串，也不一定只存在于一条消息里。
-
-### Message
-
-Message 是 Transcript 中的一条结构化记录，至少包含 `role` 和 `content`。
-
-### Transcript
-
-Transcript 是按照发生顺序排列的全部消息。它是 V1 的会话状态，也是后续 Agent Loop 的工作记忆。
-
-它们之间的关系可以写成：
+至此，一次工具调用的消息链已经完整：
 
 ```text
-Prompt 是“模型需要知道什么”
-Message 是“这些信息如何被记录”
-Transcript 是“当前累计了哪些记录”
+User Message
+    ↓
+Assistant Message: tool_use
+    ↓
+Tool Result Message: tool_result
+    ↓
+Assistant Message: text 或下一次 tool_use
 ```
 
-V1 的最小内部类型可以表达为：
+## Function Calling 和 tool_use
+
+Function Calling、Tool Calling 和 `tool_use` 经常被当成不同概念。它们的核心机制其实相同：
+
+1. 应用向模型描述可用工具；
+2. 模型生成结构化调用意图；
+3. 应用解析参数并执行本地函数；
+4. 应用把结果放回消息历史；
+5. 模型读取结果后继续生成。
+
+不同 Provider 主要是在消息格式上有差异。
+
+| | OpenAI Chat Completions | Anthropic Messages |
+|---|---|---|
+| 模型请求工具 | `assistant.tool_calls[]` | Content Block：`type: "tool_use"` |
+| 工具名称 | `function.name` | `name` |
+| 工具参数 | `function.arguments` JSON 字符串 | `input` 对象 |
+| 返回工具结果 | `role: "tool"` | User Content Block：`type: "tool_result"` |
+| 关联字段 | `tool_call_id` | `tool_use_id` |
+
+因此，Function Calling 并不是模型获得了一个可以直接调用的 JavaScript 函数。模型只获得了工具的名字、描述和参数 Schema，然后生成符合协议的结构化数据。
+
+真正的调用始终发生在宿主程序中。
+
+## 用 TypeScript 表达消息
+
+根据前面的协议，我们只定义当前示例真正需要的类型：
 
 ```ts
-type Role = "system" | "user" | "assistant"
+type TextBlock = {
+  type: "text"
+  text: string
+}
 
-interface Message {
-  role: Role
+type ToolUseBlock = {
+  type: "tool_use"
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
+type ToolResultBlock = {
+  type: "tool_result"
+  tool_use_id: string
   content: string
 }
+
+type Message =
+  | { role: "user"; content: string | ToolResultBlock[] }
+  | { role: "assistant"; content: Array<TextBlock | ToolUseBlock> }
+
+type AssistantMessage = {
+  content: Array<TextBlock | ToolUseBlock>
+  stop_reason: "end_turn" | "tool_use" | string
+}
 ```
 
-这里不直接使用某个 SDK 暴露的完整联合类型，原因不是 SDK 类型不好，而是 V1 只需要最小认知模型。等 V2 出现 Tool Message 和 Provider 差异时，再让内部 Message 契约变宽。
+这些类型不是要完整复刻 Anthropic SDK，只是把循环中真正使用的数据表示清楚。以后支持更多 Provider 或图片、Thinking 等内容时，再扩展内部类型。
 
-## 7. 基础概念四：Context Window 不是长期记忆
+## 定义第一个工具
 
-只要每次重放所有消息，模型就会一直记得吗？不会。
+我们只给 Agent 一个工具：`bash`。
 
-模型单次调用能接收的信息总量受到 Context Window 限制。它通常包括：
-
-- System Message；
-- 历史 User Message；
-- 历史 Assistant Message；
-- 当前用户输入；
-- 后续版本中的工具定义和工具结果；
-- 模型需要生成的输出空间。
-
-随着 Transcript 增长，请求会出现三类问题：
-
-1. **成本增长**：旧内容会被重复传输和处理；
-2. **注意力稀释**：真正重要的信息被大量历史包围；
-3. **容量上限**：请求最终超过模型可以接收的范围。
-
-因此，Transcript 是当前工作上下文，不是无限存储，也不是长期记忆系统。
-
-后续可以使用窗口截断、摘要、检索或外部 Memory，但 V1 不实现这些机制。V1 只建立一个事实：
-
-> 应用必须显式拥有消息状态，才有资格决定以后如何裁剪、总结或检索它。
-
-## 8. 基础概念五：Provider 是边界，但 V1 暂不抽象
-
-不同 Provider 的请求地址、鉴权方式、消息结构和响应格式可能不同。
-
-成熟框架通常需要一个 Provider 抽象：
-
-```text
-应用内部 Message
-    ↓
-Provider Adapter
-    ↓
-外部 API 协议
-```
-
-但 V1 故意不创建 `Model`、`ModelProvider` 或 Adapter 目录，而是直接在 `callModel()` 中使用裸 `fetch`。
-
-这么做有三个原因：
-
-1. 当前只接一个 OpenAI-compatible Endpoint，没有第二种协议需要统一；
-2. 直接查看请求体，更容易理解消息真正如何被发送；
-3. 没有具体差异时提前设计接口，只会得到凭空产生的抽象。
-
-本次分享只要求参与者识别“这里未来会成为边界”，而不是立刻把边界封装起来。
-
-## 9. V0：一次性模型调用
-
-在 V1 之前，先展示一个只能调用一次的 V0。
-
-它的结构只有三步：
-
-```text
-读取问题 → 调用模型 → 打印回答
-```
-
-关键代码可以简化为：
+模型看到的不是 TypeScript 函数，而是一份 JSON Schema：
 
 ```ts
-const content = process.argv.slice(2).join(" ")
-const messages = [{ role: "user", content }]
-const reply = await callModel(messages)
-console.log(reply.content)
-```
-
-V0 已经能够回答问题，但它有一个明显限制：程序没有保存上一轮 Assistant Message，也没有入口继续追加用户输入。
-
-如果每次执行程序都创建一个新的消息数组，那么每次都是一段全新的对话。
-
-这就是 V1 要解决的唯一问题。
-
-## 10. V1：可持续对话程序
-
-### 10.1 文件边界
-
-V1 只有一个核心文件：
-
-```text
-src/index.ts
-```
-
-其中只包含：
-
-```text
-Message 类型
-messages 数组
-callModel(messages)
-读取用户输入
-追加 User Message
-追加 Assistant Message
-显示模型输出
-```
-
-不包含：
-
-- Tool 或 Function Calling；
-- Agent、Runner 或 Runtime；
-- 自动循环；
-- Provider 抽象；
-- Middleware；
-- Skills；
-- Memory 数据库；
-- 流式输出；
-- TUI。
-
-### 10.2 数据流
-
-```text
-┌────────────┐
-│ 用户输入   │
-└─────┬──────┘
-      │ append user message
-      ▼
-┌──────────────────────────┐
-│ Message[] / Transcript   │
-└─────────────┬────────────┘
-              │ complete array
-              ▼
-┌──────────────────────────┐
-│ callModel(messages)      │
-└─────────────┬────────────┘
-              │ HTTP request
-              ▼
-┌──────────────────────────┐
-│ Provider API             │
-└─────────────┬────────────┘
-              │ assistant message
-              ▼
-┌──────────────────────────┐
-│ append + print response  │
-└──────────────────────────┘
-```
-
-注意，这里没有 Agent 内部循环。每次新输入都由人触发一次模型调用。
-
-### 10.3 状态所有权
-
-`messages` 数组属于应用：
-
-```ts
-const messages: Message[] = [
+const tools = [
   {
-    role: "system",
-    content: "你是一个简洁的 TypeScript 技术助手。",
+    name: "bash",
+    description:
+      "在当前工作目录执行一条 shell 命令，返回 stdout 和 stderr。需要观察文件或运行程序时使用。",
+    input_schema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "需要执行的完整 shell 命令",
+        },
+      },
+      required: ["command"],
+    },
   },
 ]
 ```
 
-每次收到输入：
+工具描述不是写给开发者看的普通注释。它会进入模型上下文，是模型决定何时使用工具、如何构造参数的重要依据。
 
-```ts
-messages.push({ role: "user", content: input })
-const assistant = await callModel(messages)
-messages.push(assistant)
-```
-
-最重要的不是这几行代码，而是两条不变量：
-
-1. 调用模型之前，当前 User Message 已经进入 Transcript；
-2. 显示结果之前或同时，Assistant Message 必须进入 Transcript。
-
-只显示但不保存 Assistant Message，会让下一轮上下文残缺。
-
-### 10.4 外部配置
-
-V1 使用三个中性的环境变量：
-
-| 变量 | 含义 |
-|---|---|
-| `AGENT_BASE_URL` | OpenAI-compatible API 根地址 |
-| `AGENT_API_KEY` | API 鉴权密钥 |
-| `AGENT_MODEL` | 模型名称 |
-
-课程版本不把任何真实密钥写入代码、文档、提交或示例输出。
-
-`callModel()` 的职责保持狭窄：
+比如只写：
 
 ```text
-接收 Message[]
-→ 构造 HTTP 请求
-→ 检查响应状态
-→ 取出第一条 Assistant Message
-→ 返回 Message
+执行命令
 ```
 
-它暂时不是通用 Provider 接口，只是本版唯一的外部调用函数。
+模型不知道命令在哪执行，也不知道能得到什么结果。
 
-## 11. 一次完整调用发生了什么
+更明确的描述告诉模型：
 
-假设当前 Transcript 为：
+- 工具在当前工作目录执行；
+- 输入是一条完整 shell 命令；
+- 输出包含标准输出和错误输出；
+- 它适合用来观察文件和运行程序。
 
-```text
-system: 你是一个简洁的 TypeScript 技术助手。
-user: 我正在设计一个消息队列，吞吐优先。
-assistant: 可以先明确消息大小、峰值吞吐和交付语义。
-user: 那我应该先确认哪个指标？
-```
+`required: ["command"]` 也不能省略。工具参数来自模型生成，宿主程序必须把它当作不可信输入验证，而不能假设字段永远存在。
 
-程序执行以下步骤：
+### 宿主程序中的 bash
 
-1. 从终端读取新的 User Message；
-2. 把它追加到 `messages`；
-3. 把完整 `messages` 交给 `callModel()`；
-4. `callModel()` 将消息编码为 Provider 请求；
-5. Provider 返回一条 Assistant Message；
-6. 程序把 Assistant Message 追加到 `messages`；
-7. 程序显示 Assistant Message 的文本；
-8. 程序等待下一次用户输入。
-
-这段流程中没有任何神秘状态。所谓“对话连续性”，完全来自第 2、3、6 步。
-
-## 12. 关键代码导读
-
-分享时只需要展示四处代码。
-
-### 12.1 Message 类型
-
-重点不是字段数量，而是内部状态不应只由零散字符串构成。
+模型看到的是 Schema，真正执行命令的是本地函数：
 
 ```ts
-type Message = {
-  role: "system" | "user" | "assistant"
-  content: string
+async function runBash(command: string): Promise<string> {
+  const child = Bun.spawn(["zsh", "-lc", command], {
+    cwd: process.cwd(),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+
+  const output = `${stdout}${stderr}`.trim()
+  return (output || `(exit ${exitCode}, no output)`).slice(0, 8_000)
 }
 ```
 
-### 12.2 Transcript 初始化
+这里有三个设计细节：
+
+- `cwd` 明确命令在哪个目录运行；
+- `stdout` 和 `stderr` 都要返回，否则模型看不到失败原因；
+- 输出需要截断，避免一次命令把整个 Context Window 填满。
+
+这段代码暂时没有实现权限确认、命令沙箱、超时和子进程取消。因为 `bash` 几乎可以做当前用户能做的任何事情，本例只能在专用演示目录中运行，不能直接接收不可信用户的任务。
+
+工具的能力边界，就是 Agent 的能力边界。一个看似简单的 `bash` 工具，实际上打开了非常宽的权限面。
+
+## 用裸 fetch 调用模型
+
+这一讲不安装 Anthropic SDK，直接使用 `fetch`。这样可以看到消息和工具定义究竟怎样进入请求。
+
+先读取环境变量：
 
 ```ts
-const messages: Message[] = [systemMessage]
+const baseURL = process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com"
+const apiKey = process.env.ANTHROPIC_API_KEY
+const model = process.env.ANTHROPIC_MODEL
+
+if (!apiKey || !model) {
+  throw new Error("Missing ANTHROPIC_API_KEY or ANTHROPIC_MODEL")
+}
 ```
 
-重点讨论谁拥有数组、谁能修改数组，以及一次新会话何时创建。
-
-### 12.3 `callModel()` 边界
+模型调用函数只负责协议通信：
 
 ```ts
-async function callModel(messages: Message[]): Promise<Message>
+async function callModel(messages: Message[]): Promise<AssistantMessage> {
+  const response = await fetch(`${baseURL}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4_096,
+      system: "你是一个终端 Agent。需要了解环境时使用 bash 工具。",
+      messages,
+      tools,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Model request failed: ${response.status} ${await response.text()}`)
+  }
+
+  return (await response.json()) as AssistantMessage
+}
 ```
 
-重点讨论输入和输出，而不是 HTTP 样板代码。函数只返回新消息，不在内部偷偷修改 Transcript。
+此时 `callModel()` 不保存状态、不执行工具，也不决定是否继续。它只做一件事：
 
-### 12.4 追加顺序
+```text
+Message[] → HTTP request → AssistantMessage
+```
+
+把协议调用和 Agent Loop 分开，循环就会变得非常容易阅读。
+
+## 消息是唯一的状态
+
+模型没有记住前一次工具调用。真正保存状态的是应用中的 `messages` 数组：
 
 ```ts
-messages.push(userMessage)
-const assistantMessage = await callModel(messages)
-messages.push(assistantMessage)
+const messages: Message[] = [
+  {
+    role: "user",
+    content: task,
+  },
+]
 ```
 
-这是 V1 最值得逐行看的部分。它定义了对话状态如何演进。
-
-## 13. 完整演示脚本
-
-### 演示准备
-
-讲者提前确认：
-
-- Bun 已安装；
-- 三个环境变量已通过本地 `.env` 配置；
-- `.env` 被 `.gitignore` 排除；
-- Endpoint 和模型可正常访问；
-- 准备一份可打印出站请求体的调试开关；
-- 准备好无网络时使用的固定响应录像或日志。
-
-真实 API 的输出存在随机性。核心结论必须通过请求日志证明，而不能只依赖模型碰巧给出正确答案。
-
-### 演示一：一次性调用
-
-输入：
-
-```text
-我的代号是 Blue Rabbit。
-```
-
-显示模型回答后结束 V0 进程。
-
-重新启动，只输入：
-
-```text
-我的代号是什么？
-```
-
-观察模型无法可靠回答。
-
-讲解重点：两个终端命令由同一个人执行，并不意味着两次 HTTP 请求共享状态。
-
-### 演示二：保存完整 Transcript
-
-启动 V1，在同一个进程内连续输入：
-
-```text
-我的代号是 Blue Rabbit，项目名是 qqq。
-```
-
-然后输入：
-
-```text
-只回答我的代号和项目名。
-```
-
-观察第二次请求中包含完整历史，并得到连贯回答。
-
-讲解重点：不要只看模型输出，同时打印实际发送的 `messages`。
-
-### 演示三：删除历史
-
-在第二轮调用前临时将传入内容改为只包含当前消息。
+每一次模型输出都必须进入数组：
 
 ```ts
-await callModel([messages.at(-1)!])
+const assistant = await callModel(messages)
+messages.push({
+  role: "assistant",
+  content: assistant.content,
+})
 ```
 
-再次运行相同对话。输出可能猜对，也可能猜错，但请求日志能确定模型没有拿到第一轮信息。
+每一次工具结果也必须进入数组：
 
-讲解重点：**模型偶然答对不是状态存在的证据；请求中是否包含信息才是证据。**
+```ts
+messages.push({
+  role: "user",
+  content: [
+    {
+      type: "tool_result",
+      tool_use_id: toolUse.id,
+      content: result,
+    },
+  ],
+})
+```
 
-### 演示四：修改 System Message
-
-先使用：
+假设模型先请求 `ls`，再请求 `cat agent.ts`，第三次模型调用收到的并不是最后一条命令结果，而是从用户任务开始的完整轨迹：
 
 ```text
-你是一个简洁的 TypeScript 技术助手。
+user: 你是谁？
+assistant: tool_use bash("ls")
+user: tool_result "agent.ts"
+assistant: tool_use bash("cat agent.ts")
+user: tool_result "...source code..."
 ```
 
-再换成：
+模型之所以能根据第一次观察结果决定第二个动作，是因为第一次行动和观察仍然存在于消息历史中。
+
+这份消息数组既是对话记录，也是最小 Agent 的工作记忆。
+
+## ReAct：Reason、Act、Observe
+
+现在已经有了模型、工具和消息状态，只差把它们连接起来。
+
+ReAct 可以拆成三个动作：
+
+### Reason
+
+把当前消息历史和工具定义发给模型，让模型生成下一条 Assistant Message。
+
+模型的“思考”不一定会以文字形式暴露。我们真正关心的是它产生的下一步决策：输出答案，还是请求工具。
+
+### Act
+
+如果 Assistant Message 中包含 `tool_use`，宿主程序找到对应工具、验证参数并执行。
+
+### Observe
+
+把执行结果包装成 `tool_result`，追加到消息历史，然后再次调用模型。
+
+三者连接起来就是：
 
 ```text
-你是严格的代码审查者。先指出风险，再给出建议；总共不超过三点。
+                  ┌────────────────────────────┐
+                  │                            │
+                  ▼                            │
+messages → Reason / model                      │
+             │                                 │
+             ├─ text only → 输出答案，结束     │
+             │                                 │
+             └─ tool_use                       │
+                    ↓                          │
+                  Act / 本地执行               │
+                    ↓                          │
+                  Observe / tool_result ───────┘
 ```
 
-给出相同的 User Message，对比回答结构。
+这个循环没有预先写死模型应该先 `ls` 还是先 `cat`。控制流由模型输出的数据决定。
 
-讲解重点：System Message 也是每次请求的一部分，不是模型账户上的永久设置。
+## 写出最小 Agent Loop
 
-### 演示五：对照最终 Helixent 架构
+先从命令行读取任务：
 
-最后展示成熟实现中的三个位置：
+```ts
+const task = process.argv.slice(2).join(" ")
 
-- Message 类型；
-- Model；
-- ModelProvider。
+if (!task) {
+  throw new Error('Usage: bun agent.ts "your task"')
+}
+```
 
-只回答两个问题：
+然后创建消息历史并进入循环：
 
-1. 哪部分概念在 V1 中已经存在？
-2. 哪些抽象是后续因为 Provider 和 Tool 复杂度才出现的？
+```ts
+const messages: Message[] = [{ role: "user", content: task }]
 
-不要在第一次分享中展开工具协议或 Agent Loop 实现。
+for (let step = 1; step <= 20; step++) {
+  const assistant = await callModel(messages)
 
-## 14. 失败实验
+  messages.push({
+    role: "assistant",
+    content: assistant.content,
+  })
 
-### 14.1 失败一：遗漏历史
+  const toolUses = assistant.content.filter(
+    (block): block is ToolUseBlock => block.type === "tool_use",
+  )
 
-**改动**：第二轮只提交当前 User Message。
+  if (toolUses.length === 0) {
+    const text = assistant.content
+      .filter((block): block is TextBlock => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
 
-**现象**：模型无法可靠引用第一轮信息。
+    console.log(text)
+    process.exit(0)
+  }
 
-**原因**：第一次请求的内容不在当前上下文中。
+  const toolResults: ToolResultBlock[] = []
 
-**恢复**：提交从 System Message 到当前 User Message 的完整 Transcript。
+  for (const toolUse of toolUses) {
+    const result = await executeTool(toolUse)
 
-### 14.2 失败二：没有保存 Assistant Message
+    toolResults.push({
+      type: "tool_result",
+      tool_use_id: toolUse.id,
+      content: result,
+    })
+  }
 
-**改动**：显示第一轮回答，但不执行 `messages.push(assistantMessage)`。
+  messages.push({ role: "user", content: toolResults })
+}
 
-**现象**：第二轮模型知道用户说过什么，却不知道自己回答过什么；涉及修改、确认或追问时容易出现矛盾。
+throw new Error("Agent exceeded 20 steps")
+```
 
-**原因**：Transcript 只保存了一半对话。
+这就是 Agent 的核心。
 
-**恢复**：每次成功调用后把完整 Assistant Message 追加到状态中。
-
-### 14.3 失败三：重复追加当前用户消息
-
-**改动**：输入处理函数和 `callModel()` 都向数组追加相同 User Message。
-
-**现象**：请求日志中连续出现两条相同问题，模型可能过度强调、重复回答或误判用户在催促。
-
-**原因**：状态修改职责不唯一。
-
-**恢复**：规定 Transcript 只由会话控制层修改，`callModel()` 保持纯边界函数。
-
-### 14.4 失败四：角色或顺序错误
-
-**改动**：把历史 Assistant Message 标成 User，或者在发送前按角色重新分组。
-
-**现象**：模型无法区分用户要求和自己的历史回答，甚至把自己的回答当成新指令。
-
-**原因**：Role 和时间顺序共同定义了对话语义。
-
-**恢复**：保留原始角色，并采用只追加的顺序记录。
-
-### 14.5 失败五：Transcript 无限增长
-
-**改动**：连续加入大量文本，并始终重放全部内容。
-
-**现象**：延迟、输入 Token 和成本持续增加，最终可能超过 Context Window。
-
-**原因**：把工作上下文误当成无限存储。
-
-**恢复**：V1 只记录并展示问题，不在本版加入摘要或 Memory；把它登记为后续 Runtime 的设计问题。
-
-## 15. 常见误解
-
-### “模型已经有聊天能力，为什么还要保存消息？”
-
-聊天产品保存了消息，不代表裸 API 会替你的应用保存。需要区分产品能力和模型调用协议。
-
-### “只保存 User Message 就够了吧？”
-
-不够。模型需要知道自己已经给出过哪些结论、承诺和问题，才能保持一致。
-
-### “System Prompt 不就是一个全局字符串吗？”
-
-它最终仍是模型当前调用可以看到的输入。应用需要明确它何时创建、如何更新、是否进入审计记录。
-
-### “只要有 while 循环就是 Agent 吗？”
-
-不是。V1 的输入循环由人驱动：用户输入一次，模型回答一次。Agent Loop 需要模型根据观察结果自主决定是否采取下一步行动，这要等到工具协议出现之后。
-
-### “模型答对了，所以服务端记住了上一轮。”
-
-模型可能根据常识或概率猜对。判断状态是否存在，应查看第二次请求实际包含了什么。
-
-### “Context Window 就是 Memory。”
-
-Context Window 是单次调用可见信息的容量；Memory 是应用选择、保存和重新注入长期信息的机制。两者不是同一个概念。
-
-### “V1 应该先设计一个通用 Provider 接口。”
-
-当前只有一个协议实现，尚无足够差异证明接口应该长什么样。V2 引入工具转换后，Provider 的真实职责会自然显现。
-
-## 16. V1 与最终框架的关系
-
-V1 虽然简单，已经包含最终框架不会消失的三个事实：
-
-| V1 概念 | 最终框架中的位置 |
-|---|---|
-| `Message` | Foundation Message 契约 |
-| `messages` | AgentContext 中的 Transcript |
-| `callModel()` | Model 与 ModelProvider 的协作边界 |
-
-后续版本会改变代码组织，但不会推翻这三个事实。
-
-成熟架构之所以分层，不是因为目录越多越专业，而是因为后续出现了具体变化：
-
-- Provider 协议需要替换；
-- Assistant Message 会包含 Tool Call；
-- Tool Result 需要回填；
-- 模型调用会进入自主循环；
-- 生命周期需要取消、错误处理和扩展点。
-
-第一次分享结束时，参与者应该能看见这些问题，但不需要提前解决它们。
-
-## 17. 本次结论
-
-这次分享只建立四条结论：
-
-1. **模型调用是无状态的。** 当前请求没有的信息，模型就没有可靠依据使用。
-2. **应用拥有会话状态。** 对话连续性来自应用保存并重放 Transcript。
-3. **Message 是第一份稳定契约。** Role、Content 和顺序共同描述已经发生的事情。
-4. **V1 还不是 Agent。** 它能对话，但不能选择动作，也不能根据动作结果自主继续。
-
-一句话概括：
-
-> V1 让模型拥有连续的上下文，但还没有给它接触外部世界的手。
-
-## 18. 下一次：Tool Calling
-
-V1 的限制非常明确：
-
-- 它只能生成文字；
-- `callModel()` 与某一种外部协议直接耦合；
-- Message 还不能表达 Tool Use 和 Tool Result；
-- 程序无法验证和执行模型产生的结构化意图。
-
-第二次分享将从一个问题开始：
-
-> 当模型说“我想读取这个文件”时，这句话怎样变成一次真实、可验证、可控制的函数调用？
-
-V2 将引入：
-
-- `Model` 与 `ModelProvider`；
-- Provider 协议转换；
-- `FunctionTool` 与参数 Schema；
-- Tool Use、Tool Result 和调用 ID；
-- 一次有限的“模型 → 工具 → 模型”往返。
-
-它仍然不会拥有任意多步自主循环。真正的 ReAct Agent Loop 留到第三次分享。
-
-## 19. 版本信息
+循环中只有一个判断：
 
 ```text
-代码分支：feat/01-model-and-messages
-冻结标签：course-v1
-下一版本：feat/02-tool-calling
-版本差异：feat/01-model-and-messages..feat/02-tool-calling
+模型还要调用工具吗？
 ```
 
-V1 分支建立后，应保证：
+- 如果不要，输出文本并结束；
+- 如果要，执行工具、记录结果，然后继续。
 
-- 可以在没有 V2–V5 代码的情况下独立运行；
-- 只有单文件模型调用和多轮消息状态；
-- 不提前包含工具、Agent Loop 或 Middleware；
-- 使用 Fake Provider 或固定响应测试消息追加顺序；
-- 真实 Provider 只用于现场演示，不作为确定性验证手段。
+`20` 步上限非常重要。模型可能反复执行相同命令，也可能一直认为任务没有完成。Agent 的停止条件不能只依赖模型自觉结束，宿主程序必须设置硬边界。
 
-## 20. 分享者检查清单
+### 执行工具
 
-分享前：
+虽然现在只有一个工具，仍然需要验证模型返回的名称和参数：
 
-- [ ] V1 分支可以从干净环境安装和运行；
-- [ ] `.env` 未被 Git 跟踪；
-- [ ] 演示账户和模型 Endpoint 可用；
-- [ ] 准备无网络时的请求与响应记录；
-- [ ] V0、V1 和失败实验都有可快速切换的提交或补丁；
-- [ ] 出站请求日志会隐藏 API Key；
-- [ ] 示例 Transcript 不包含真实个人信息；
-- [ ] 现场演示总时长控制在 30 分钟以内；
-- [ ] 最终架构对照只讲 Message、Model、ModelProvider；
-- [ ] 结尾明确说明 V1 不是 Agent。
+```ts
+async function executeTool(toolUse: ToolUseBlock): Promise<string> {
+  if (toolUse.name !== "bash") {
+    return `Error: unknown tool ${toolUse.name}`
+  }
 
-分享后，参与者至少应该能回答：
+  const command = toolUse.input.command
+  if (typeof command !== "string" || command.length === 0) {
+    return "Error: command must be a non-empty string"
+  }
 
-- 第二次模型调用从哪里获得第一次对话的信息？
-- 为什么必须保存 Assistant Message？
-- 为什么不能任意重排消息？
-- Context Window 与长期 Memory 有什么区别？
-- V1 距离 Agent 还缺少哪两个关键能力？
+  console.log(`$ ${command}`)
 
-最后一个问题的预期答案是：**外部行动能力，以及由模型驱动的多步循环。**
+  try {
+    return await runBash(command)
+  } catch (error) {
+    return `Error: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+```
+
+这里没有把工具错误直接抛出并终止程序，而是将错误文本作为观察结果返回模型。
+
+例如命令失败：
+
+```text
+$ pnpm test
+zsh: command not found: pnpm
+```
+
+模型在下一轮读到这个结果后，可能改用：
+
+```text
+$ bun test
+```
+
+普通程序通常由开发者提前编写错误分支；在 Agent Loop 中，一部分恢复路径可以由模型根据错误观察动态决定。
+
+宿主程序仍然负责不可退让的边界，例如权限、最大步数、超时和危险命令。模型负责的是在边界之内选择下一步，而不是决定边界本身。
+
+## Agent 和 Chat 的区别
+
+现在可以准确比较两者。
+
+### Chat 程序
+
+```text
+用户输入
+    ↓
+模型回答
+    ↓
+等待下一次用户输入
+```
+
+每一轮继续的原因是用户再次发送消息。
+
+### Agent 程序
+
+```text
+用户给出目标
+    ↓
+模型选择动作
+    ↓
+程序执行动作
+    ↓
+模型观察结果并选择下一步
+    ↓
+直到模型输出最终答案或程序触发停止条件
+```
+
+Agent 可以在没有新用户输入的情况下继续多个步骤。
+
+两者的差异不在于模型名字，也不在于回答是否聪明，而在于控制流：
+
+| | Chat | Agent |
+|---|---|---|
+| 每轮由谁触发 | 用户 | 用户启动，模型和工具结果继续驱动 |
+| 能否影响外部世界 | 通常不能 | 通过宿主程序提供的工具 |
+| 状态包含什么 | 对话消息 | 对话、工具请求、工具结果 |
+| 何时结束 | 完成一次回答 | 没有工具调用或达到程序边界 |
+| 主要风险 | 错误回答、上下文泄露 | 还包括工具权限和真实副作用 |
+
+可以把最小 Agent 写成一个公式：
+
+```text
+Agent = Model + Messages + Tools + Loop + Stop Conditions
+```
+
+少了 Tools，它只能说话；少了 Loop，它只能完成一次预先编排的工具往返；少了 Stop Conditions，它可能永远运行。
+
+## 再看“你是谁”
+
+回到开头的任务：
+
+```bash
+bun agent.ts "你是谁？"
+```
+
+第一轮，消息历史只有：
+
+```text
+user: 你是谁？
+```
+
+模型没有足够信息，于是生成：
+
+```text
+assistant: tool_use bash("ls")
+```
+
+宿主程序执行命令并追加观察：
+
+```text
+user: tool_result "agent.ts"
+```
+
+第二轮，模型知道目录中有 `agent.ts`，于是继续：
+
+```text
+assistant: tool_use bash("cat agent.ts")
+```
+
+宿主程序再次执行并追加结果。第三轮，模型读取了源代码，不再请求工具，而是返回文本答案。
+
+这段行为没有预先写成：
+
+```ts
+if (question === "你是谁？") {
+  await runBash("ls")
+  await runBash("cat agent.ts")
+}
+```
+
+程序只定义了可用动作和循环规则。具体行动序列是模型根据当前观察动态生成的。
+
+这就是固定 Workflow 与 Agent 的关键分界：
+
+> Workflow 的控制流主要写在代码里；Agent 的一部分控制流来自模型在运行时产生的结构化决策。
+
+## 这一版刻意没有解决什么
+
+单文件 Agent 已经可以运行，但它离一个可复用框架还有很远。
+
+所有内容都挤在 `agent.ts` 中：
+
+- Anthropic 协议与 Agent Loop 耦合；
+- Message 类型只服务于当前 Provider；
+- 工具名称通过 `if` 判断分发；
+- `bash` 没有权限确认和超时；
+- 多个 `tool_use` 只能顺序执行；
+- 没有取消机制；
+- 没有测试替身，验证依赖真实模型；
+- 消息不断增长，没有上下文管理。
+
+这些不是第一讲应该提前消灭的问题。相反，它们会成为后面四讲引入抽象的真实理由。
+
+如果一开始就展示 `ModelProvider`、`AgentContext`、Middleware 和 Skills，大家只能记住很多接口；先看到这个循环真实运行，再拆分它，每一个抽象才有参照物。
+
+## 小结
+
+这一讲从一个裸模型请求开始，得到一个能够观察环境并连续行动的最小 ReAct Agent。
+
+需要记住五件事：
+
+1. **LLM API 本身没有会话状态。** 连续性来自应用保存并重放消息。
+2. **Anthropic Messages 使用 Content Block 表达文本、`tool_use` 和 `tool_result`。**
+3. **模型不执行工具。** 它只生成结构化调用意图，真正执行的是宿主程序。
+4. **ReAct 是一个反馈循环。** 模型决策、程序行动、结果观察不断进入同一份消息历史。
+5. **Agent 与 Chat 的核心区别是控制流。** Agent 可以在没有新用户输入时，根据工具结果继续选择下一步。
+
+剥掉所有框架包装，最小 Agent 就是：
+
+```text
+把消息发给模型
+  ├─ 模型只返回文本 → 输出并结束
+  └─ 模型请求工具   → 本地执行
+                         ↓
+                    把结果放回消息
+                         ↓
+                       继续
+```
+
+下一讲，我们会保留这个循环，但不再让所有东西挤在一个文件里。我们将从单文件中的具体问题出发，逐步建立 Message、Model、ModelProvider 和 Tool 的边界，让这个“能跑的 Agent”变成“可以扩展的 Agent”。
