@@ -698,10 +698,10 @@ V2 将引入：
 ## 19. 版本信息
 
 ```text
-代码分支：course/01-model-and-messages
+代码分支：feat/01-model-and-messages
 冻结标签：course-v1
-下一版本：course/02-tool-calling
-版本差异：course/01-model-and-messages..course/02-tool-calling
+下一版本：feat/02-tool-calling
+版本差异：feat/01-model-and-messages..feat/02-tool-calling
 ```
 
 V1 分支建立后，应保证：
