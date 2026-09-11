@@ -3,7 +3,7 @@ import type { Tool } from "../../foundation/tools"
 export const bashTool: Tool = {
   name: "bash",
   description:
-    "在当前工作目录执行一条 shell 命令，返回 stdout 和 stderr。需要观察文件或运行程序时使用。",
+    "在当前工作目录执行一条 shell 命令，返回退出码、stdout 和 stderr。需要运行测试、构建或其他命令时使用。",
   inputSchema: {
     type: "object",
     properties: {
@@ -20,8 +20,6 @@ export const bashTool: Tool = {
       throw new Error("command must be a non-empty string")
     }
 
-    console.log(`$ ${command}`)
-
     const child = Bun.spawn(["zsh", "-lc", command], {
       cwd: process.cwd(),
       stdout: "pipe",
@@ -35,6 +33,6 @@ export const bashTool: Tool = {
     ])
 
     const output = `${stdout}${stderr}`.trim()
-    return (output || `(exit ${exitCode}, no output)`).slice(0, 8_000)
+    return `exit ${exitCode}\n${output || "(no output)"}`.slice(0, 8_000)
   },
 }

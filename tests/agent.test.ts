@@ -86,7 +86,7 @@ test("turns the prompt into a system message and feeds tool results back", async
         {
           type: "tool_result",
           tool_call_id: "toolu_test_1",
-          content: "blue-rabbit",
+          content: "exit 0\nblue-rabbit",
         },
       ],
     },

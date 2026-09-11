@@ -1,11 +1,12 @@
 # qqq · Agent from 0 to 1
 
-这是五次 Agent 底层原理分享的第二个版本：在第一讲的最小 ReAct Loop 上，加入 Foundation 契约、可替换的 Model Provider、可复用的 `Agent` 类和四层工程骨架。
+这是一个通过五次分享逐步构建的 Coding Agent。当前版本已经包含 Foundation 契约、可替换的 Model Provider、可复用的 `Agent` 类、四个 Coding 工具和日志中间件。
 
 系列文章：
 
 - [第一讲：120 行写出一个最小 ReAct Agent](docs/01-model-and-messages.md)
 - [第二讲：从最小循环到 Agent 架构](docs/02-foundation-and-agent.md)
+- [第三讲：让 Agent 开始写代码](docs/03-coding-tools-and-middleware.md)
 
 ## 运行
 
@@ -37,7 +38,7 @@ ANTHROPIC_MODEL=deepseek-v4-flash
 然后运行：
 
 ```bash
-bun run start -- "你是谁？"
+bun run start -- "读取 package.json，告诉我这个项目有哪些脚本，并运行测试。"
 ```
 
 验证代码：
