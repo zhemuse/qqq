@@ -92,3 +92,43 @@ test("turns the prompt into a system message and feeds tool results back", async
     },
   ])
 })
+
+test("streams each new transcript message while the agent runs", async () => {
+  const provider = new RecordingProvider()
+  const agent = new Agent(
+    new Model("test-model", provider),
+    "You are a terminal agent.",
+    [bashTool],
+    3,
+  )
+
+  const messages = []
+  for await (const message of agent.stream("Who are you?")) {
+    messages.push(message)
+  }
+
+  expect(messages.map((message) => message.role)).toEqual([
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+  ])
+  expect(messages[0]).toEqual({
+    role: "user",
+    content: [{ type: "text", text: "Who are you?" }],
+  })
+  expect(messages[2]).toMatchObject({
+    role: "tool",
+    content: [
+      {
+        type: "tool_result",
+        tool_call_id: "toolu_test_1",
+        content: "exit 0\nblue-rabbit",
+      },
+    ],
+  })
+  expect(messages[3]).toEqual({
+    role: "assistant",
+    content: [{ type: "text", text: "I am the layered agent." }],
+  })
+})

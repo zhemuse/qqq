@@ -5,6 +5,7 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "types": ["bun"],
+    "jsx": "react-jsx",
 
     "strict": true,
     "skipLibCheck": true,
@@ -12,5 +13,5 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tests/**/*.tsx"]
 }

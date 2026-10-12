@@ -88,3 +88,15 @@ export async function discoverSkills(
 
   return skills
 }
+
+export async function discoverSkillFiles(
+  skillFiles: string[],
+): Promise<SkillMetadata[]> {
+  const skills = await Promise.all(
+    [...skillFiles]
+      .sort((a, b) => a.localeCompare(b))
+      .map(async (path) => parseSkill(await readFile(path, "utf8"), path)),
+  )
+
+  return skills
+}

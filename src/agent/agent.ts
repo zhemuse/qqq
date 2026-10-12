@@ -37,10 +37,29 @@ export class Agent {
   ) {}
 
   async run(text: string): Promise<string> {
-    this.messages.push({
+    let answer = ""
+
+    for await (const message of this.stream(text)) {
+      if (message.role !== "assistant") {
+        continue
+      }
+
+      const text = getText(message)
+      if (text) {
+        answer = text
+      }
+    }
+
+    return answer
+  }
+
+  async *stream(text: string): AsyncGenerator<Message> {
+    const userMessage: Message = {
       role: "user",
       content: [{ type: "text", text }],
-    })
+    }
+    this.messages.push(userMessage)
+    yield userMessage
 
     const context: AgentContext = {
       messages: this.messages,
@@ -60,6 +79,7 @@ export class Agent {
       const assistant = await this.model.invoke(modelContext)
       await this.afterModel(context, assistant)
       this.messages.push(assistant)
+      yield assistant
 
       const toolCalls = assistant.content.filter(
         (block): block is ToolCallContent => block.type === "tool_call",
@@ -68,10 +88,12 @@ export class Agent {
       if (toolCalls.length === 0) {
         await this.afterAgentStep(context, step)
         await this.afterAgentRun(context)
-        return getText(assistant)
+        return
       }
 
-      this.messages.push(await this.act(context, toolCalls))
+      const toolMessage = await this.act(context, toolCalls)
+      this.messages.push(toolMessage)
+      yield toolMessage
       await this.afterAgentStep(context, step)
     }
 

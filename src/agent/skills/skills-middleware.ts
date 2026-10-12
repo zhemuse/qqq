@@ -1,5 +1,9 @@
 import type { AgentMiddleware } from "../agent-middleware"
-import { discoverSkills, type SkillMetadata } from "./skill-reader"
+import {
+  discoverSkillFiles,
+  discoverSkills,
+  type SkillMetadata,
+} from "./skill-reader"
 
 function escapeXml(value: string): string {
   return value
@@ -25,13 +29,15 @@ ${catalog}
 }
 
 export function createSkillsMiddleware(
-  skillsDirectory: string,
+  source: string | string[],
 ): AgentMiddleware {
   let skills: SkillMetadata[] = []
 
   return {
     async beforeAgentRun() {
-      skills = await discoverSkills(skillsDirectory)
+      skills = Array.isArray(source)
+        ? await discoverSkillFiles(source)
+        : await discoverSkills(source)
     },
 
     beforeModel(_agentContext, modelContext) {

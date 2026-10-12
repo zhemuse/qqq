@@ -100,3 +100,23 @@ test("a coding agent logs model and tool activity", async () => {
     /^Agent finished: 2 steps, 2 model calls, 1 tool calls, \d+ms$/,
   )
 })
+
+test("a coding agent can disable console logging for an interactive UI", async () => {
+  const originalLog = console.log
+  const logs: string[] = []
+  console.log = (...values: unknown[]) => {
+    logs.push(values.map(String).join(" "))
+  }
+
+  try {
+    const agent = createCodingAgent(
+      new Model("test-model", new ToolRecordingProvider()),
+      { logging: false },
+    )
+    await agent.run("Inspect package.json")
+  } finally {
+    console.log = originalLog
+  }
+
+  expect(logs).toEqual([])
+})

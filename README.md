@@ -1,6 +1,6 @@
 # qqq · Agent from 0 to 1
 
-这是一个通过五次分享逐步构建的 Coding Agent。当前版本已经包含 Foundation 契约、可替换的 Model Provider、可复用的 `Agent` 类、四个 Coding 工具、Middleware、Skill 和 Todo。
+这是一个通过五次分享逐步构建的 Coding Agent。当前版本已经包含 Foundation 契约、可替换的 Model Provider、可复用的 `Agent` 类、四个 Coding 工具、Middleware、Skill、Todo 和 Ink TUI。
 
 系列文章：
 
@@ -8,6 +8,7 @@
 - [第二讲：从最小循环到 Agent 架构](docs/02-foundation-and-agent.md)
 - [第三讲：让 Agent 开始写代码](docs/03-coding-tools-and-middleware.md)
 - [第四讲：让 Agent 学会工作](docs/04-skills-and-todo.md)
+- [第五讲：把 Agent 变成一个可以使用的产品](docs/05-ink-tui-and-release.md)
 
 ## 运行
 
@@ -36,13 +37,26 @@ ANTHROPIC_MODEL=deepseek-v4-flash
 
 接口兼容范围及最新模型信息以 [DeepSeek Anthropic API 官方文档](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api/) 为准。
 
-然后运行：
+然后启动 TUI：
 
 ```bash
-bun run start -- "请把 workspace/npm-release-demo 准备为 0.2.0 版本：运行发布前检查，更新版本号和 CHANGELOG，检查 npm 包内容，但不要真正发布。"
+bun run dev
 ```
 
-Agent 会按需读取 `skills/npm-release/SKILL.md`，使用 Todo 维护执行进度，并在 `npm pack --dry-run` 后停止。演示包同时设置了 `private: true` 和强制失败的 `prepublishOnly`，即使误调用 `npm publish`，也不会进入 Registry 发布流程。
+进入界面后可以输入：
+
+```text
+请把 workspace/npm-release-demo 准备为 0.2.0 版本：运行发布前检查，更新版本号和 CHANGELOG，检查 npm 包内容，但不要真正发布。
+```
+
+Agent 会按需读取内置的 `npm-release` Skill，使用 Todo 维护执行进度，并在 `npm pack --dry-run` 后停止。演示包同时设置了 `private: true` 和强制失败的 `prepublishOnly`，即使误调用 `npm publish`，也不会进入 Registry 发布流程。
+
+构建可以通过 npm 安装的可执行文件：
+
+```bash
+bun run build:bin
+npm pack --dry-run
+```
 
 验证代码：
 

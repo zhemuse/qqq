@@ -5,6 +5,7 @@ import { join } from "node:path"
 
 import { Agent } from "../src/agent/agent"
 import {
+  discoverSkillFiles,
   discoverSkills,
 } from "../src/agent/skills/skill-reader"
 import { createSkillsMiddleware } from "../src/agent/skills/skills-middleware"
@@ -67,6 +68,29 @@ description: Prepare an npm package release safely.
       name: "npm-release",
       description: "Prepare an npm package release safely.",
       path: join(skillDirectory, "SKILL.md"),
+    },
+  ])
+})
+
+test("discovers embedded Skills from explicit file paths", async () => {
+  const directory = await createSkillDirectory()
+  const path = join(directory, "SKILL.md")
+  await Bun.write(
+    path,
+    `---
+name: embedded-skill
+description: A Skill bundled with the executable.
+---
+
+# Embedded Skill
+`,
+  )
+
+  expect(await discoverSkillFiles([path])).toEqual([
+    {
+      name: "embedded-skill",
+      description: "A Skill bundled with the executable.",
+      path,
     },
   ])
 })

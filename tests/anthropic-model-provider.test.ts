@@ -161,3 +161,83 @@ test("translates Foundation messages and tools into an Anthropic request", async
     globalThis.fetch = originalFetch
   }
 })
+
+test("normalizes a tool call without an object input", async () => {
+  const originalFetch = globalThis.fetch
+  const stubFetch = async () =>
+    Response.json({
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_missing_input",
+          name: "bash",
+        },
+      ],
+    })
+
+  globalThis.fetch = Object.assign(stubFetch, {
+    preconnect: originalFetch.preconnect,
+  })
+
+  try {
+    const provider = new AnthropicModelProvider({
+      baseURL: "https://example.test",
+      apiKey: "test-key",
+    })
+
+    expect(
+      await provider.invoke({
+        model: "test-model",
+        messages: [],
+      }),
+    ).toEqual({
+      role: "assistant",
+      content: [
+        {
+          type: "tool_call",
+          id: "toolu_missing_input",
+          name: "bash",
+          input: {},
+        },
+      ],
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("ignores unsupported response content blocks", async () => {
+  const originalFetch = globalThis.fetch
+  const stubFetch = async () =>
+    Response.json({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "internal reasoning" },
+        { type: "text", text: "Visible answer" },
+      ],
+    })
+
+  globalThis.fetch = Object.assign(stubFetch, {
+    preconnect: originalFetch.preconnect,
+  })
+
+  try {
+    const provider = new AnthropicModelProvider({
+      baseURL: "https://example.test",
+      apiKey: "test-key",
+    })
+
+    expect(
+      await provider.invoke({
+        model: "test-model",
+        messages: [],
+      }),
+    ).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "Visible answer" }],
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

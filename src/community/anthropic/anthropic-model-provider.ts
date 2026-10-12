@@ -2,8 +2,6 @@ import type {
   AssistantMessage,
   Message,
   SystemMessage,
-  TextContent,
-  ToolCallContent,
 } from "../../foundation/messages"
 import type {
   ModelProvider,
@@ -11,13 +9,9 @@ import type {
 } from "../../foundation/models"
 import type { Tool } from "../../foundation/tools"
 
-type AnthropicToolUseBlock = Omit<ToolCallContent, "type"> & {
-  type: "tool_use"
-}
-
 type AnthropicAssistantMessage = {
   role: "assistant"
-  content: Array<TextContent | AnthropicToolUseBlock>
+  content: unknown[]
 }
 
 function toAnthropicMessage(message: Exclude<Message, SystemMessage>) {
@@ -50,11 +44,38 @@ function fromAnthropicMessage(
 ): AssistantMessage {
   return {
     role: "assistant",
-    content: message.content.map((content) =>
-      content.type === "tool_use"
-        ? { ...content, type: "tool_call" as const }
-        : content,
-    ),
+    content: message.content.flatMap<AssistantMessage["content"][number]>((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return []
+      }
+
+      const content = value as Record<string, unknown>
+      if (content.type === "text" && typeof content.text === "string") {
+        return [{ type: "text" as const, text: content.text }]
+      }
+
+      if (
+        content.type !== "tool_use" ||
+        typeof content.id !== "string" ||
+        typeof content.name !== "string"
+      ) {
+        return []
+      }
+
+      const input =
+        content.input &&
+        typeof content.input === "object" &&
+        !Array.isArray(content.input)
+          ? content.input as Record<string, unknown>
+          : {}
+
+      return [{
+        type: "tool_call" as const,
+        id: content.id,
+        name: content.name,
+        input,
+      }]
+    }),
   }
 }
 
