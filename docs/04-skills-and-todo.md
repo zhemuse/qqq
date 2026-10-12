@@ -6,7 +6,7 @@ Hello, boys and girls.
 
 但“拥有工具”不等于“知道怎样工作”。
 
-面对一个稍长的任务，Agent 可能直接开始修改代码，没有先阅读项目约定；也可能完成实现后忘记补测试，或者反复检查同一个文件。System Prompt 可以提醒它，但随着项目规则不断增加，把所有知识都塞进每一次模型请求并不是一个好办法。
+面对一个稍长的任务，Agent 可能直接开始操作，却不知道项目自己的工作约定；也可能进行到一半便遗漏步骤，或者反复检查同一件事。System Prompt 可以提醒它，但随着项目规则不断增加，把所有知识都塞进每一次模型请求并不是一个好办法。
 
 这一讲，我们会为 Agent 增加两种能力：Skill 为它提供按需加载的工作方法，Todo 帮助它维护一个跨越多轮推理的任务计划。为了实现它们，Middleware 也会从“观察生命周期”进一步演进为“修改模型上下文”。
 
@@ -20,48 +20,63 @@ Hello, boys and girls.
 
 ## 从一个较长的任务开始
 
-假设我们给 Coding Agent 一个新任务：
+我们先在工作空间里准备一个很小的 npm 包：
 
 ```text
-为 str_replace 增加 count 参数，补充测试，更新 README，
-最后运行完整检查。
+workspace/
+└── npm-release-demo/
+    ├── package.json
+    ├── tsconfig.json
+    ├── README.md
+    ├── CHANGELOG.md
+    ├── src/index.ts
+    ├── test/index.test.ts
+    └── test/package.test.ts
 ```
 
-这不再是一次简单的文件修改。Agent 至少需要完成下面几步：
+它不是一个真实等待发布的项目，只用于演示完整的发布准备过程。它在 `package.json` 中设置了 `private: true`，并通过 `prepublishOnly` 主动阻止发布。现在，我们给 Coding Agent 一个新任务：
 
 ```text
-理解现有 Tool 契约
-        ↓
-阅读 str_replace 实现
-        ↓
-先补测试，再修改代码
-        ↓
-更新使用文档
-        ↓
-运行完整检查
+请把 workspace/npm-release-demo 准备为 0.2.0 版本：
+运行发布前检查，更新版本号和 CHANGELOG，检查 npm 包内容，
+但不要真正发布。
 ```
 
-第三讲的 Agent 拥有完成这些动作所需的工具，却没有保存这份计划，也不知道这个项目是否要求先写测试。
+Agent 已经可以读写文件和运行命令，但它并不知道“一次正确的发布”包含哪些步骤：
+
+```text
+检查工作区状态和当前版本
+        ↓
+运行测试与类型检查
+        ↓
+更新版本号和 CHANGELOG
+        ↓
+检查将要进入 npm 包的文件
+        ↓
+生成发布摘要，等待确认
+```
+
+第三讲的 Agent 拥有完成这些动作所需的工具，却不知道这个项目的发布规范，也没有保存这次发布的进度。
 
 如果只依赖模型临时推理，执行过程可能变成：
 
 ```text
-读取 str_replace
+读取 package.json
         ↓
-直接修改代码
+修改版本号
         ↓
-运行一条测试
+运行 npm publish
         ↓
-看到测试通过，结束
+发布完成
 ```
 
-代码也许可以工作，但“补充测试”和“更新 README”可能已经从 Context 中淡出。任务越长，中间产生的代码、命令输出和错误信息越多，最初要求距离模型的下一次生成就越远。
+这显然不是我们希望的结果。Agent 跳过了质量检查和包内容检查，甚至没有在真正发布前等待确认。任务越长，中间产生的文件内容、命令输出和错误信息越多，最初的限制也越容易从 Context 中淡出。
 
 我们需要分别解决两个问题：
 
 ```text
-这个项目应该怎样完成开发任务？       Skill
-这次任务还有哪些步骤没有完成？       Todo
+这个项目应该怎样准备一次发布？       Skill
+这次发布已经进行到了哪里？           Todo
 ```
 
 ## Tool、Skill 和 Prompt
@@ -94,13 +109,14 @@ System Prompt 描述 Agent 的长期身份和基本行为：
 
 ### Skill：Agent 应该怎样工作
 
-Skill 是面向某类任务的工作方法。例如，一个测试 Skill 可以规定：
+Skill 是面向某类任务的工作方法。例如，一个 npm 发布 Skill 可以规定：
 
 ```text
-实现功能前先写失败测试；
-确认测试因为目标行为缺失而失败；
-只编写使测试通过的最小实现；
-最后运行完整检查。
+先确认当前版本和工作区状态；
+运行项目规定的质量检查；
+更新版本号和 CHANGELOG；
+使用 npm pack --dry-run 检查包内容；
+未经用户确认，不得执行 npm publish、创建 tag 或推送远程。
 ```
 
 它不是新的工具。读取 Skill 后，Agent 使用的仍然是 `read_file`、`str_replace` 和 `bash`。变化的是它组织这些动作的方式。
@@ -121,7 +137,7 @@ Skill                提供特定任务的工作方法
 
 ```text
 skills/
-└── test-driven-development/
+└── npm-release/
     └── SKILL.md
 ```
 
@@ -129,21 +145,22 @@ skills/
 
 ```md
 ---
-name: test-driven-development
-description: 在实现功能或修复 Bug 时使用，先写失败测试，再完成最小实现。
+name: npm-release
+description: 当需要准备 npm 包发布，或检查一个包是否可以安全发布时使用。
 ---
 ```
 
 正文才是完整工作流程：
 
 ```md
-# Test-Driven Development
+# npm Release
 
-1. 写一个描述目标行为的测试。
-2. 运行测试，确认它因为功能尚未实现而失败。
-3. 编写使测试通过的最小代码。
-4. 再次运行测试。
-5. 在测试保持通过的前提下整理代码。
+1. 检查工作区状态、当前版本和发布目标。
+2. 运行项目规定的测试与类型检查。
+3. 更新 package.json 和 CHANGELOG.md。
+4. 运行 npm pack --dry-run，检查将要发布的文件。
+5. 汇总结果并等待用户确认。
+6. 未经确认，不执行 npm publish，不创建 tag，也不推送远程。
 ```
 
 Frontmatter 很短，适合放进模型上下文；正文可能很长，只在真正需要时读取。
@@ -162,9 +179,9 @@ export type SkillMetadata = {
 
 ```json
 {
-  "name": "test-driven-development",
-  "description": "在实现功能或修复 Bug 时使用，先写失败测试，再完成最小实现。",
-  "path": "skills/test-driven-development/SKILL.md"
+  "name": "npm-release",
+  "description": "当需要准备 npm 包发布，或检查一个包是否可以安全发布时使用。",
+  "path": "skills/npm-release/SKILL.md"
 }
 ```
 
@@ -190,20 +207,20 @@ Agent 每次调用模型前只看到目录：
 ```xml
 <skills>
   <skill>
-    <name>test-driven-development</name>
-    <description>在实现功能或修复 Bug 时使用……</description>
-    <path>skills/test-driven-development/SKILL.md</path>
+    <name>npm-release</name>
+    <description>当需要准备 npm 包发布时使用……</description>
+    <path>skills/npm-release/SKILL.md</path>
   </skill>
 </skills>
 ```
 
-模型发现当前任务需要实现新功能，于是调用已经存在的 `read_file`：
+模型发现当前任务需要准备 npm 发布，于是调用已经存在的 `read_file`：
 
 ```json
 {
   "name": "read_file",
   "input": {
-    "path": "skills/test-driven-development/SKILL.md"
+    "path": "skills/npm-release/SKILL.md"
   }
 }
 ```
@@ -354,23 +371,23 @@ export type TodoItem = {
 ```json
 [
   {
-    "id": "tests",
-    "content": "为 count 参数补充失败测试",
+    "id": "inspect",
+    "content": "检查工作区状态和当前版本",
     "status": "in_progress"
   },
   {
-    "id": "implementation",
-    "content": "实现有限次数替换",
+    "id": "quality",
+    "content": "运行测试与类型检查",
     "status": "pending"
   },
   {
-    "id": "docs",
-    "content": "更新 README",
+    "id": "version",
+    "content": "更新版本号和 CHANGELOG",
     "status": "pending"
   },
   {
-    "id": "check",
-    "content": "运行完整检查",
+    "id": "package",
+    "content": "检查 npm 包内容并输出发布摘要",
     "status": "pending"
   }
 ]
@@ -454,10 +471,10 @@ const todoMiddleware: AgentMiddleware = {
 
 ```xml
 <todo_reminder>
-  [in_progress] 为 count 参数补充失败测试
-  [pending] 实现有限次数替换
-  [pending] 更新 README
-  [pending] 运行完整检查
+  [in_progress] 检查工作区状态和当前版本
+  [pending] 运行测试与类型检查
+  [pending] 更新版本号和 CHANGELOG
+  [pending] 检查 npm 包内容并输出发布摘要
 </todo_reminder>
 ```
 
@@ -497,6 +514,12 @@ export function createTodoSystem() {
 最后，把两个系统交给 Coding Agent：
 
 ```ts
+import { fileURLToPath } from "node:url"
+
+const SKILLS_DIRECTORY = fileURLToPath(
+  new URL("../../skills", import.meta.url),
+)
+
 export function createCodingAgent(model: Model): Agent {
   const todo = createTodoSystem()
 
@@ -512,13 +535,15 @@ export function createCodingAgent(model: Model): Agent {
     ],
     20,
     [
-      createSkillsMiddleware("skills"),
+      createSkillsMiddleware(SKILLS_DIRECTORY),
       todo.middleware,
       createLoggingMiddleware(),
     ],
   )
 }
 ```
+
+Skill 目录相对当前模块解析，而不是依赖启动命令所在的目录。这样无论从项目根目录还是其他工作目录启动 CLI，都能发现同一组内置 Skill。
 
 中间件按照注册顺序修改同一个 `ModelContext`：
 
@@ -541,45 +566,44 @@ Model
 现在重新提交开头的任务：
 
 ```text
-为 str_replace 增加 count 参数，补充测试，更新 README，
-最后运行完整检查。
+请把 workspace/npm-release-demo 准备为 0.2.0 版本：
+运行发布前检查，更新版本号和 CHANGELOG，检查 npm 包内容，
+但不要真正发布。
 ```
 
 执行过程可能变成：
 
 ```text
 Step 1
-发现 test-driven-development Skill 与当前任务匹配
-read_file → skills/test-driven-development/SKILL.md
+发现 npm-release Skill 与当前任务匹配
+read_file → skills/npm-release/SKILL.md
 
 Step 2
 todo_write → 建立四个任务
 
 Step 3
-read_file → 阅读现有测试
-write_file → 增加失败测试
+read_file → 阅读 package.json 和 CHANGELOG.md
+bash → 检查工作区状态
 
 Step 4
-bash → 运行测试，确认失败
-todo_write → tests completed，implementation in_progress
+bash → 运行测试与类型检查
+todo_write → inspect、quality completed，version in_progress
 
 Step 5
-str_replace → 实现 count 参数
-bash → 测试通过
+str_replace → 将版本更新为 0.2.0
+str_replace → 更新 CHANGELOG.md
 
 Step 6
-str_replace → 更新 README
-todo_write → docs completed，check in_progress
+bash → npm pack --dry-run
+todo_write → version、package completed
 
 Step 7
-bash → 运行完整检查
-todo_write → 全部 completed
-
-Step 8
-模型给出最终回答
+模型给出发布准备摘要，并明确没有执行 npm publish
 ```
 
-Skill 没有替 Agent 执行测试，Todo 也没有自动完成任务。真正采取动作的仍然是模型和四个 Coding 工具。
+`npm pack --dry-run` 会列出即将进入 npm 包的文件，但不会把包发布到 Registry。演示包还通过 `private: true` 和 `prepublishOnly` 提供双重保护，即使模型误调用 `npm publish`，命令也会失败。在真实项目中，真正的外部操作仍然必须留在用户确认之后。
+
+Skill 没有替 Agent 更新版本或运行检查，Todo 也没有自动完成任务。真正采取动作的仍然是模型和 Coding 工具。
 
 它们改变的是 Agent 的工作结构：Skill 提供经过整理的方法，Todo 把长任务从一段容易淡出的自然语言变成持续可见的状态。
 

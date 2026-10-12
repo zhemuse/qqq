@@ -6,7 +6,7 @@ import type {
   ToolMessage,
   ToolResultContent,
 } from "../foundation/messages"
-import type { Model } from "../foundation/models"
+import type { Model, ModelContext } from "../foundation/models"
 import type { Tool } from "../foundation/tools"
 import type { AgentContext, AgentMiddleware } from "./agent-middleware"
 
@@ -51,12 +51,13 @@ export class Agent {
     for (let step = 1; step <= this.maxSteps; step += 1) {
       context.step = step
       await this.beforeAgentStep(context, step)
-      await this.beforeModel(context)
-      const assistant = await this.model.invoke({
+      const modelContext: ModelContext = {
         prompt: this.prompt,
         messages: this.messages,
         tools: this.tools,
-      })
+      }
+      await this.beforeModel(context, modelContext)
+      const assistant = await this.model.invoke(modelContext)
       await this.afterModel(context, assistant)
       this.messages.push(assistant)
 
@@ -147,9 +148,16 @@ export class Agent {
     }
   }
 
-  private async beforeModel(context: AgentContext): Promise<void> {
+  private async beforeModel(
+    context: AgentContext,
+    modelContext: ModelContext,
+  ): Promise<void> {
     for (const middleware of this.middlewares) {
-      await middleware.beforeModel?.(context)
+      const changes = await middleware.beforeModel?.(context, modelContext)
+
+      if (changes) {
+        Object.assign(modelContext, changes)
+      }
     }
   }
 

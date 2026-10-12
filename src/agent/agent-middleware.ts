@@ -4,6 +4,7 @@ import type {
   ToolCallContent,
   ToolResultContent,
 } from "../foundation/messages"
+import type { ModelContext } from "../foundation/models"
 
 export type AgentContext = {
   messages: Message[]
@@ -17,7 +18,13 @@ export interface AgentMiddleware {
   beforeAgentStep?(context: AgentContext, step: number): Promise<void> | void
   afterAgentStep?(context: AgentContext, step: number): Promise<void> | void
 
-  beforeModel?(context: AgentContext): Promise<void> | void
+  beforeModel?(
+    context: AgentContext,
+    modelContext: ModelContext,
+  ):
+    | Promise<Partial<ModelContext> | void>
+    | Partial<ModelContext>
+    | void
   afterModel?(
     context: AgentContext,
     message: AssistantMessage,

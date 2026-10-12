@@ -51,6 +51,36 @@ class EndlessToolProvider implements ModelProvider {
   }
 }
 
+class PromptRecordingProvider implements ModelProvider {
+  readonly prompts: string[] = []
+
+  async invoke(input: ModelProviderInput): Promise<AssistantMessage> {
+    const system = input.messages[0]
+    const firstBlock =
+      system && Array.isArray(system.content) ? system.content[0] : undefined
+    this.prompts.push(firstBlock?.type === "text" ? firstBlock.text : "")
+
+    if (this.prompts.length === 1) {
+      return {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_call",
+            id: "inspect_prompt",
+            name: "inspect",
+            input: {},
+          },
+        ],
+      }
+    }
+
+    return {
+      role: "assistant",
+      content: [{ type: "text", text: "finished" }],
+    }
+  }
+}
+
 test("runs middleware hooks around the agent, model and tool lifecycle", async () => {
   const events: string[] = []
   const tool: Tool = {
@@ -139,4 +169,39 @@ test("does not finish the agent lifecycle without a final answer", async () => {
 
   await expect(agent.run("Start")).rejects.toThrow("Agent exceeded 1 steps")
   expect(finishedAtStep).toBe(0)
+})
+
+test("middleware changes a fresh model context for each step", async () => {
+  const provider = new PromptRecordingProvider()
+  const tool: Tool = {
+    name: "inspect",
+    description: "Inspect",
+    inputSchema: { type: "object" },
+    async invoke() {
+      return "observed"
+    },
+  }
+  const agent = new Agent(
+    new Model("test-model", provider),
+    "Base prompt",
+    [tool],
+    3,
+    [
+      {
+        beforeModel(context, modelContext) {
+          return {
+            prompt: `${modelContext.prompt}\nStep ${context.step}`,
+          }
+        },
+      },
+    ],
+  )
+
+  await agent.run("Start")
+
+  expect(provider.prompts).toEqual([
+    "Base prompt\nStep 1",
+    "Base prompt\nStep 2",
+  ])
+  expect(agent.prompt).toBe("Base prompt")
 })
